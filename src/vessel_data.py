@@ -11,7 +11,7 @@ class VesselDataProcessor:
     def __init__(self, data_path: Union[str, Path]):
         self.file_path = Path(data_path)
         self.df = None
-        self.processed_d = None
+        self.processed_df = None
 
     def load_data(self, time_col:str = "Sample time", **kwargs) -> 'VesselDataProcessor':
         """
@@ -62,13 +62,13 @@ class VesselDataProcessor:
         """
         A flexible plotting tool capable of handling multiple signals and secondary axes.
         """
-        if self.df is None:
+        if self.clean_df is None:
             raise ValueError("Data not loaded.")
 
         fig, ax1 = plt.subplots(figsize=(14, 6))
         
         for col in columns:
-            if col not in self.df.columns:
+            if col not in self.clean_df.columns:
                 print(f"Warning: Column '{col}' not found.")
                 continue
                 
@@ -76,12 +76,12 @@ class VesselDataProcessor:
             ax = ax1.twinx() if col == secondary_y else ax1
             
             # Base signal
-            ax.plot(self.df.index, self.df[col], alpha=0.6, label=f'{col} (Raw)')
+            ax.plot(self.clean_df.index, self.clean_df[col], alpha=0.6, label=f'{col} (Raw)')
             
             # Optional rolling average overlay
             if rolling_window:
-                smoothed = self.df[col].rolling(window=rolling_window, center=True).mean()
-                ax.plot(self.df.index, smoothed, linewidth=2, label=f'{col} (Mean {rolling_window})')
+                smoothed = self.clean_df[col].rolling(window=rolling_window, center=True).mean()
+                ax.plot(self.clean_df.index, smoothed, linewidth=2, label=f'{col} (Mean {rolling_window})')
                 
             ax.set_ylabel(col)
             ax.legend(loc='upper left' if ax == ax1 else 'upper right')
