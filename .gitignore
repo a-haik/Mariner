@@ -1,0 +1,21 @@
+# Environments
+.venv
+
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+Python Cache
+__pycache__/
+*.py[cod]
+
+# Data file
+data/raw/
+data/processed/
+*.csv
+*.parquet
+*.dat
+*.hdf5
+*.h5
+
+# VS Code settings

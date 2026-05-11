@@ -1,0 +1,14 @@
+# Data Processing
+numpy
+pandas
+scipy
+matplotlib
+
+# Advanced Modeling & Optimization
+jax
+jaxlib
+casadi
+numba
+
+# Notebook Support
+ipykernel
