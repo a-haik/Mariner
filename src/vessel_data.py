@@ -75,13 +75,18 @@ class VesselDataProcessor:
         if self.clean_df is None:
             print("No data loaded.")
             return
-        
+
+        ae_power=self.clean_df['AE_POWER(kW)']
+        ge_sum=self.clean_df['GE162(kW)']+self.clean_df['GE262(kW)']+self.clean_df['GE362(kW)'] 
+
+        P_offset = np.abs(ae_power - ge_sum)
+
         
             
         print("--- Data Sanity Check ---")
         print(f"Total rows: {len(self.clean_df)}")
         print(f"Missing values:\n{self.clean_df.isna().sum()}")
-        # We will add physical checks here later
+        print(f'Power balance check (AE_POWER - sum(GE)) mean: {P_offset.mean():.2f} kW, std: {P_offset.std():.2f} kW')
 
     def plot_series(self, 
                     columns: List[str], 
