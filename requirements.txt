@@ -3,6 +3,8 @@ numpy
 pandas
 scipy
 matplotlib
+typing
+pathlib
 
 # Advanced Modeling & Optimization
 jax
