@@ -5,6 +5,8 @@ scipy
 matplotlib
 typing
 pathlib
+math
+branca
 
 # Advanced Modeling & Optimization
 jax

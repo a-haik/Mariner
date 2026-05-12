@@ -4,6 +4,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from pathlib import Path
 from typing import Union, List, Optional
+import folium
+import branca.colormap as cm
+import math
 
 class VesselDataProcessor:
     """
@@ -204,3 +207,187 @@ class VesselDataProcessor:
         fig.tight_layout()
             
         return fig, axes
+    
+    def process_coordinates(self) -> 'VesselDataProcessor':
+        """
+        Converts ASCII-encoded Degrees and Minutes into standard Decimal Degrees (DD).
+        Adds 'LATITUDE(DD)' and 'LONGITUDE(DD)' columns to clean_df.
+        """
+        if self.clean_df is None:
+            raise ValueError("Data not loaded. Call load_data() first.")
+
+        req_cols = ['LAT-DEG(degree)', 'LAT-MIN(min)', 'LAT-NS', 
+                    'LONG-DEG(degree)', 'LONG-MIN(min)', 'LONG-EW']
+        
+        if not all(col in self.clean_df.columns for col in req_cols):
+            print("Warning: Missing geographic columns. Cannot process coordinates.")
+            return self
+
+        # Map ASCII values to algebraic signs
+        # North (78) -> +1, South (83) -> -1
+        lat_sign = np.where(self.clean_df['LAT-NS'] == 83, -1.0, 1.0)
+        
+        # East (69) -> +1, West (87) -> -1
+        lon_sign = np.where(self.clean_df['LONG-EW'] == 87, -1.0, 1.0)
+
+        # Compute Decimal Degrees
+        self.clean_df['LATITUDE(DD)'] = lat_sign * (
+            self.clean_df['LAT-DEG(degree)'] + (self.clean_df['LAT-MIN(min)'] / 60.0)
+        )
+        self.clean_df['LONGITUDE(DD)'] = lon_sign * (
+            self.clean_df['LONG-DEG(degree)'] + (self.clean_df['LONG-MIN(min)'] / 60.0)
+        )
+
+        print("Successfully processed standard Latitude and Longitude.")
+        return self
+    
+
+    @staticmethod
+    def _calculate_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Calculates the initial bearing (forward azimuth) between two coordinates."""
+        lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+        dlon = lon2 - lon1
+        x = math.sin(dlon) * math.cos(lat2)
+        y = math.cos(lat1) * math.sin(lat2) - (math.sin(lat1) * math.cos(lat2) * math.cos(dlon))
+        initial_bearing = math.atan2(x, y)
+        return math.degrees(initial_bearing)
+    
+    def _get_arrow_vertices(self, lat: float, lon: float, bearing_deg: float, size: float = 0.005) -> List[List[float]]:
+        """
+        Generates vertices for an arrowhead polygon.
+        Defined in map units (degrees) so it scales with zoom.
+        """
+        # THE FIX: Convert degrees to radians for Python's math functions!
+        bearing_rad = math.radians(bearing_deg)
+        
+        # Rotate vertices by the bearing
+        cos_b = math.cos(bearing_rad)
+        sin_b = math.sin(bearing_rad)
+        
+        # Adjust the x-offset (longitude) by the cosine of latitude 
+        # to maintain the shape aspect ratio on a Mercator projection
+        lon_scale = 1.0 / math.cos(math.radians(lat))
+        
+        # Vertices in local (y=North, x=East) coordinates
+        # Tip, bottom-left, bottom-right
+        local_coords = [(size, 0), (-size, -size/2), (-size, size/2)]
+        
+        vertices = []
+        for dy, dx in local_coords:
+            # Apply 2D rotation matrix
+            r_lat = lat + (dy * cos_b - dx * sin_b)
+            r_lon = lon + (dy * sin_b + dx * cos_b) * lon_scale
+            vertices.append([r_lat, r_lon])
+            
+        return vertices
+
+    def plot_trajectory_folium(self, arrow_step: int = 10, arrow_size: float = 0.002) -> folium.Map:
+        """
+        Plots the vessel trajectory on an interactive Folium map.
+        - The track is color-graded by actual time.
+        - Adds directional arrows for clarity when zoomed in.
+        - Clusters overlapping Arrival/Departure markers and numbers them chronologically.
+        """
+        from folium import plugins
+        if self.clean_df is None or 'LATITUDE(DD)' not in self.clean_df.columns:
+            raise ValueError("Coordinates not processed. Call process_coordinates() first.")
+
+        # 1. Filter valid GPS data
+        geo_data = self.clean_df.replace(
+            {'LATITUDE(DD)': 0, 'LONGITUDE(DD)': 0}, np.nan
+        ).dropna(subset=['LATITUDE(DD)', 'LONGITUDE(DD)'])
+        
+        if len(geo_data) == 0:
+            raise ValueError("No valid coordinates found.")
+
+        coords = geo_data[['LATITUDE(DD)', 'LONGITUDE(DD)']].values.tolist()
+        
+        # 2. Time-based Color Grading using Elapsed Hours
+        # Calculate elapsed time in hours relative to the first valid GPS point
+        start_time = geo_data.index.min()
+        elapsed_seconds = (geo_data.index - start_time).total_seconds()
+        time_proxy = elapsed_seconds / 3600.0  # Convert to hours
+        
+        vmin, vmax = time_proxy.min(), time_proxy.max()
+        
+        colormap = cm.LinearColormap(
+            colors=['blue', 'cyan', 'yellow', 'red'], 
+            vmin=vmin, 
+            vmax=vmax,
+            caption=f'Elapsed Time (Hours) since {start_time.strftime("%d/%m/%Y %H:%M")}'
+        )
+
+        # 3. Initialize Map
+        center_coord = [geo_data['LATITUDE(DD)'].median(), geo_data['LONGITUDE(DD)'].median()]
+        vessel_map = folium.Map(location=center_coord, zoom_start=6, tiles='CartoDB positron')
+
+        # 4. Draw the graded trajectory line
+        folium.ColorLine(
+            positions=coords,
+            colors=time_proxy,
+            colormap=colormap,
+            weight=4,
+            opacity=0.7
+        ).add_to(vessel_map)
+
+        # 5. Add Dynamic Arrows
+        for i in range(0, len(geo_data) - 1, arrow_step):
+            p1 = geo_data.iloc[i]
+            p2 = geo_data.iloc[i+1]
+            
+            # Calculate bearing and color
+            bearing = self._calculate_bearing(p1['LATITUDE(DD)'], p1['LONGITUDE(DD)'], 
+                                              p2['LATITUDE(DD)'], p2['LONGITUDE(DD)'])
+            
+            # Get hex color from the colormap for this specific time
+            color_hex = colormap(time_proxy[i])
+            
+            # Generate vertices
+            arrow_verts = self._get_arrow_vertices(p1['LATITUDE(DD)'], p1['LONGITUDE(DD)'], bearing, size=arrow_size)
+            
+            folium.Polygon(
+                locations=arrow_verts,
+                color=color_hex,
+                fill=True,
+                fill_color=color_hex,
+                fill_opacity=0.9,
+                weight=1,
+                popup=f"Time: {geo_data.index[i].strftime('%H:%M')}"
+            ).add_to(vessel_map)
+        
+        colormap.add_to(vessel_map)
+
+        # 6. Detect & Cluster Arrivals and Departures
+        if 'STATUS' in geo_data.columns:
+            port_states = ['idle', 'loading', 'discharging']
+            sea_states = ['laden', 'ballast']
+
+            status_lower = geo_data['STATUS'].str.lower()
+            state_map = pd.Series(np.nan, index=geo_data.index)
+            state_map[status_lower.isin(port_states)] = 0
+            state_map[status_lower.isin(sea_states)] = 1
+            state_map = state_map.ffill()
+
+            transitions = state_map.diff()
+            departures = geo_data[transitions == 1]
+            arrivals = geo_data[transitions == -1]
+
+            event_cluster = plugins.MarkerCluster(name="Port Events").add_to(vessel_map)
+
+            for i, (timestamp, row) in enumerate(departures.iterrows(), start=1):
+                popup_html = f"<b>Departure #{i}</b><br>Time: {timestamp}<br>Status: {row['STATUS']}"
+                folium.Marker(
+                    location=[row['LATITUDE(DD)'], row['LONGITUDE(DD)']],
+                    popup=folium.Popup(popup_html, max_width=250),
+                    icon=folium.Icon(color='green', icon='arrow-up', prefix='fa')
+                ).add_to(event_cluster)
+
+            for i, (timestamp, row) in enumerate(arrivals.iterrows(), start=1):
+                popup_html = f"<b>Arrival #{i}</b><br>Time: {timestamp}<br>Status: {row['STATUS']}"
+                folium.Marker(
+                    location=[row['LATITUDE(DD)'], row['LONGITUDE(DD)']],
+                    popup=folium.Popup(popup_html, max_width=250),
+                    icon=folium.Icon(color='red', icon='arrow-down', prefix='fa')
+                ).add_to(event_cluster)
+
+        return vessel_map
