@@ -38,13 +38,11 @@ class VesselDataProcessor:
 
         footer_line = self._find_footer_start()
         
-        # Load only the telemetry data
-        # We use nrows to stop exactly before the blank line/metadata
         read_params = {
             "filepath_or_buffer": self.file_path,
             "nrows": footer_line - 1 if footer_line > 0 else None,
-            "engine": 'c',  # Faster C engine
-            "na_values": ['', ' '],
+            "engine": 'c',
+            "na_values": ['', ' ', 'NaN', 'null'],
             "parse_dates": [time_col],
             "date_format": date_format
         }
@@ -55,14 +53,45 @@ class VesselDataProcessor:
         if "Unnamed" in self.df.columns[-1]:
             self.df.rename(columns={self.df.columns[-1]: "STATUS"}, inplace=True)
         
-        # Clean up: remove trailing commas if Pandas added 'Unnamed' columns
-        self.clean_df = self.df.loc[:, ~self.df.columns.str.contains('^Unnamed')]
+        # Clean up unnamed columns
+        df_clean = self.df.loc[:, ~self.df.columns.str.contains('^Unnamed')].copy()
         
-        # Set Index
-        self.clean_df.set_index(time_col, inplace=True)
-        self.clean_df.sort_index(inplace=True)
+        # --- BEST PRACTICES: DATA CLEANING PIPELINE ---
+        
+        # 1. Set Index and sort
+        df_clean.set_index(time_col, inplace=True)
+        df_clean.sort_index(inplace=True)
+        
+        # 2. Deduplication: Remove rows with identical timestamps
+        initial_len = len(df_clean)
+        df_clean = df_clean[~df_clean.index.duplicated(keep='first')]
+        if initial_len != len(df_clean):
+            print(f"Removed {initial_len - len(df_clean)} duplicate timestamps.")
 
-        print(f"Successfully loaded {len(self.clean_df)} telemetry rows.")
+        # 3. Regularize the Time Grid & Handle Gaps
+        # Resample to a strict 5-minute grid. 
+        # We use .mean() to aggregate if multiple points fell into the same 5-min bucket
+        df_clean = df_clean.resample('5min').mean(numeric_only=True)
+        
+        # Interpolate small gaps (limit=3 means max 15 minutes of invented data)
+        # We only interpolate numeric columns; categorical columns like STATUS remain NaN
+        numeric_cols = df_clean.select_dtypes(include=[np.number]).columns
+        df_clean[numeric_cols] = df_clean[numeric_cols].interpolate(method='time', limit=3)
+
+        # 4. Physical Bounding
+        # Power and current cannot be negative.
+        power_current_cols = [col for col in df_clean.columns if 'kW' in col or '(A)' in col]
+        for col in power_current_cols:
+            df_clean[col] = df_clean[col].clip(lower=0.0)
+
+        # Re-merge the STATUS column which was dropped by numeric resampling
+        # We use forward fill with a strict limit so we don't invent status over long blackouts
+        if 'STATUS' in self.df.columns:
+            status_series = self.df.set_index(time_col)[~self.df.set_index(time_col).index.duplicated(keep='first')]['STATUS']
+            df_clean['STATUS'] = status_series.reindex(df_clean.index).ffill(limit=3)
+
+        self.clean_df = df_clean
+        print(f"Successfully loaded and cleaned {len(self.clean_df)} telemetry rows.")
         return self
 
     def extract_metadata(self) -> pd.DataFrame:

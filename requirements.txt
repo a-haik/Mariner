@@ -13,6 +13,7 @@ jax
 jaxlib
 casadi
 numba
+sklearn
 
 # Notebook Support
 ipykernel
