@@ -14,13 +14,13 @@ class VesselRegimeClassifier:
         Initializes the classifier with the Electrical Load Analysis (ELA) priors.
         
         Args:
-            ela_priors: A DataFrame containing 'Total_Load_kW' and 'Num_Generators' 
+            ela_priors: A DataFrame containing 'AE_POWER(kW)' and 'NUM_GENERATORS' 
                         for the 8 expected physical regimes.
         """
         self.n_components = len(ela_priors)
         
         # Extract the physical priors to seed the Expectation-Maximization
-        self.means_init = ela_priors[['Total_Load_kW', 'Num_Generators']].values
+        self.means_init = ela_priors[['TOTAL_LOAD_KW', 'NUM_GENERATORS']].values
         
         # Initialize the GMM
         # We use full covariance matrices to allow elliptical cluster shapes
@@ -48,7 +48,7 @@ class VesselRegimeClassifier:
         self.is_fitted = True
         return raw_labels
 
-    def apply_temporal_filter(self, raw_labels: pd.Series, window_size: int = 3) -> pd.Series:
+    def apply_temporal_filter(self, raw_labels: pd.Series, window_size: int = 6) -> pd.Series:
         """
         Applies a rolling majority-vote (mode) filter to enforce temporal continuity.
         
@@ -76,3 +76,46 @@ class VesselRegimeClassifier:
         """
         is_transient = raw_labels != smoothed_labels
         return is_transient
+    
+    def generate_validation_report(self, df: pd.DataFrame, raw_status_col: str = 'STATUS', 
+                                   predicted_regime_col: str = 'REGIME_NAME') -> pd.DataFrame:
+        """
+        Performs a cross-tabulation analysis to compare raw human-logged status 
+        against the GMM-predicted physical regimes.
+        """
+        if raw_status_col not in df.columns or predicted_regime_col not in df.columns:
+            print(f"Error: Required columns {raw_status_col} or {predicted_regime_col} missing.")
+            return pd.DataFrame()
+
+        # Normalize casing for the raw status to avoid 'Idle' vs 'idle' issues
+        temp_df = df.copy()
+        temp_df[raw_status_col] = temp_df[raw_status_col].str.lower()
+
+        # Create the contingency table
+        mapping_matrix = pd.crosstab(
+            temp_df[raw_status_col], 
+            temp_df[predicted_regime_col], 
+            margins=True,
+            margins_name="TOTAL"
+        )
+
+        print("\n" + "="*30)
+        print("MARINER REGIME VALIDATION REPORT")
+        print("="*30)
+        print(f"Comparison: {raw_status_col} (Raw) vs. {predicted_regime_col} (Physical)")
+        print("-" * 30)
+        print(mapping_matrix)
+        
+        # Physical insight: Identify most 'ambiguous' raw status
+        # (Status with the most entropy in its physical mapping)
+        print("\n--- Critical Physical Insights ---")
+        for status in temp_df[raw_status_col].unique():
+            if pd.isna(status): 
+                continue
+            counts = temp_df[temp_df[raw_status_col] == status][predicted_regime_col].value_counts()
+            if len(counts) > 1:
+                top_regime = counts.index[0]
+                pct = (counts.iloc[0] / counts.sum()) * 100
+                print(f"Raw Status '{status.upper()}' is {pct:.1f}% '{top_regime}' physically.")
+        
+        return mapping_matrix
