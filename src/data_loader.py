@@ -49,7 +49,9 @@ class VesselDataLoader:
             
             # Load Sharing Symmetry Error
             active_gen_powers = df[p_cols].replace(0, np.nan) # Ignore inactive generators
-            df['LOAD_SYMMETRY_ERROR'] = (active_gen_powers.max(axis=1) - active_gen_powers.min(axis=1)).fillna(0)
+            mean_active_power = active_gen_powers.mean(axis=1)
+
+            df['LOAD_SYMMETRY_ERROR'] = ((active_gen_powers.max(axis=1) - active_gen_powers.min(axis=1)) / mean_active_power).fillna(0)
 
         # 2. Kinematic Features
         if 'HEADING(degree)' in df.columns:

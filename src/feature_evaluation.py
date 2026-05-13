@@ -67,8 +67,11 @@ class FeatureEvaluator:
         
         if 'kruskal_wallis' in results and not results['kruskal_wallis'].empty:
             report.append("## 1. Statistical Divergence (Kruskal-Wallis H-Test)")
-            report.append("*(Higher H-Statistic indicates stronger median separation across STATUS regimes)*")
-            report.append(results['kruskal_wallis'].round(3).to_markdown(index=False))
+            report.append("*(Higher H-Statistic indicates stronger median separation. Low P-Value indicates statistical significance.)*")
+            # Format scientific notation for p-values in markdown
+            kw_df = results['kruskal_wallis'].copy()
+            kw_df['P-Value'] = kw_df['P-Value'].apply(lambda x: f"{x:.2e}")
+            report.append(kw_df.round(3).to_markdown(index=False))
             report.append("\n")
             
         if 'spearman_corr' in results and not results['spearman_corr'].empty:
@@ -85,9 +88,16 @@ class FeatureEvaluator:
         if 'pca_loadings' in results and not results['pca_loadings'].empty:
             report.append("## 3. PCA Loadings (Intrinsic Dimensionality)")
             target_var = 0.95
-            cols_to_show = self._get_dynamic_pcs(results['pca_loadings'], target_var)
+            pca_df = results['pca_loadings']
+            cols_to_show = self._get_dynamic_pcs(pca_df, target_var)
+            
+            # Extract and format the explained variance specifically for the markdown
+            explained_vars = pca_df.loc['Explained_Variance', cols_to_show]
+            var_strings = [f"**{col}**: {val*100:.1f}%" for col, val in explained_vars.items()]
+            
             report.append(f"*(Dynamically showing PCs that explain {target_var*100:.0f}% of cumulative variance)*")
-            report.append(results['pca_loadings'][cols_to_show].round(3).to_markdown())
+            report.append(f"**Variance Explained per PC:** {', '.join(var_strings)}\n")
+            report.append(pca_df[cols_to_show].round(3).to_markdown())
             report.append("\n")
             
         if 'transition_lead' in results and not results['transition_lead'].empty:
@@ -101,66 +111,76 @@ class FeatureEvaluator:
     def plot_diagnostics(self, results: Dict) -> None:
         """
         Generates visual representations of the feature space for local analysis in VSC.
+        Plots each diagnostic as an individual figure to prevent squashing.
         """
-        # Determine how many valid plots we have to size the figure correctly
         valid_keys = [k for k in ['kruskal_wallis', 'spearman_corr', 'pca_loadings', 'transition_lead'] 
                       if k in results and not results[k].empty]
         
-        plots = len(valid_keys)
-        if plots == 0:
+        if not valid_keys:
             print("No supported visual results found.")
             return
 
-        cols = 2
-        rows = (plots + 1) // cols
-        
-        fig, axes = plt.subplots(rows, cols, figsize=(14, 5 * rows))
-        if plots > 1:
-            axes = axes.flatten()
-        else:
-            axes = [axes]
-        
-        plot_idx = 0
-        
-        # 1. Plot Kruskal-Wallis H-Statistics
+        # 1. Plot Kruskal-Wallis H-Statistics & P-Values
         if 'kruskal_wallis' in valid_keys:
-            sns.barplot(data=results['kruskal_wallis'], x='H-Statistic', y='Feature', ax=axes[plot_idx], hue='Feature', legend=False, palette='viridis')
-            axes[plot_idx].set_title("Kruskal-Wallis H-Statistic\n(Higher = Better Regime Separation)")
-            axes[plot_idx].set_xlabel("H-Statistic")
-            plot_idx += 1
+            plt.figure(figsize=(10, 6))
+            kw_df = results['kruskal_wallis'].copy()
+            # Calculate -log10(p-value) for visualization, replacing exactly 0 with a tiny float to avoid inf
+            kw_df['Log_P'] = -np.log10(kw_df['P-Value'].replace(0, 1e-300))
+            
+            ax1 = plt.gca()
+            # Plot H-Statistic as bars
+            sns.barplot(data=kw_df, x='H-Statistic', y='Feature', ax=ax1, color='royalblue', alpha=0.7)
+            ax1.set_xlabel("H-Statistic (Bars)", color='royalblue', fontweight='bold')
+            ax1.set_title("Kruskal-Wallis: Regime Median Separation & P-Value")
+            
+            # Create a secondary axis for the p-values
+            ax2 = ax1.twiny()
+            # Plot -log10(p-value) as diamond markers
+            sns.scatterplot(data=kw_df, x='Log_P', y='Feature', ax=ax2, color='darkorange', s=120, marker='D', zorder=5)
+            ax2.set_xlabel("-log10(P-Value) (Diamonds)", color='darkorange', fontweight='bold')
+            
+            plt.tight_layout()
+            plt.show()
         
         # 2. Plot Feature Correlations
         if 'spearman_corr' in valid_keys:
+            plt.figure(figsize=(9, 7))
             sns.heatmap(results['spearman_corr'], annot=True, cmap='coolwarm', 
-                        vmin=-1, vmax=1, center=0, fmt=".2f", ax=axes[plot_idx], 
+                        vmin=-1, vmax=1, center=0, fmt=".2f", 
                         cbar_kws={'label': 'Spearman Rho'}, square=True)
-            axes[plot_idx].set_title("Feature Collinearity (Spearman Rank)")
-            plot_idx += 1
+            plt.title("Feature Collinearity (Spearman Rank)")
+            plt.tight_layout()
+            plt.show()
             
         # 3. Plot PCA Loadings Heatmap
         if 'pca_loadings' in valid_keys:
+            plt.figure(figsize=(9, 7))
             cols_to_show = self._get_dynamic_pcs(results['pca_loadings'], variance_threshold=0.95)
             loadings_only = results['pca_loadings'].drop('Explained_Variance', errors='ignore')
             
+            # Format x-axis labels to include the variance percentage
+            explained_vars = results['pca_loadings'].loc['Explained_Variance', cols_to_show]
+            x_labels = [f"{col}\n({val*100:.1f}%)" for col, val in explained_vars.items()]
+            
+            ax = plt.gca()
             sns.heatmap(loadings_only[cols_to_show], annot=True, cmap='PRGn', 
-                        center=0, fmt=".2f", ax=axes[plot_idx], cbar_kws={'label': 'Loading Weight'}, square=True)
-            axes[plot_idx].set_title("PCA Feature Loadings (95% Variance)")
-            plot_idx += 1
+                        center=0, fmt=".2f", ax=ax, cbar_kws={'label': 'Loading Weight'}, square=True)
+            ax.set_title("PCA Feature Loadings")
+            ax.set_xticklabels(x_labels)
+            
+            plt.tight_layout()
+            plt.show()
             
         # 4. Plot Transition Lead Correlations
         if 'transition_lead' in valid_keys:
-            sns.barplot(data=results['transition_lead'], x='Pre-Transition_Correlation', y='Feature', ax=axes[plot_idx], hue='Feature', legend=False, palette='magma')
-            axes[plot_idx].set_title("Transition Anticipation\n(Correlation w/ Imminent Status Change)")
-            axes[plot_idx].set_xlabel("Point-Biserial Correlation")
-            axes[plot_idx].set_xlim(-1, 1)
-            plot_idx += 1
-            
-        # Hide any unused subplots
-        for i in range(plot_idx, len(axes)):
-            fig.delaxes(axes[i])
-            
-        plt.tight_layout()
-        plt.show()
+            plt.figure(figsize=(10, 5))
+            sns.barplot(data=results['transition_lead'], x='Pre-Transition_Correlation', y='Feature', 
+                        hue='Feature', legend=False, palette='magma')
+            plt.title("Transition Anticipation\n(Correlation w/ Imminent Status Change)")
+            plt.xlabel("Point-Biserial Correlation")
+            plt.xlim(-1, 1)
+            plt.tight_layout()
+            plt.show()
 
     def _calc_statistical_divergence(self, features: List[str]) -> pd.DataFrame:
         """Applies Kruskal-Wallis H-test to evaluate regime separation."""
