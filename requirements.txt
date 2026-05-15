@@ -15,6 +15,7 @@ jaxlib
 casadi
 numba
 sklearn
+numpyro
 
 # Notebook Support
 ipykernel

@@ -1,0 +1,18 @@
+# MARINER Bayesian HMM Topology Report
+
+*(Evaluating thermodynamic and mechanical inertia constraints for WP9 profile extraction)*
+
+| Experiment             |   K_Target |   K_Active |   Transitions |   Mean Dwell Time (hrs) |   Final ELBO Loss |
+|:-----------------------|-----------:|-----------:|--------------:|------------------------:|------------------:|
+| ELA_Baseline_K8_W10    |          8 |          3 |            59 |                    4.07 |           3778.39 |
+| ELA_Sticky_K8_W100     |          8 |          2 |            27 |                    8.89 |           5707.63 |
+| Pruned_Sticky_K6_W100  |          6 |          1 |             0 |                  239.92 |          22216.8  |
+| Pruned_Extreme_K6_W500 |          6 |          2 |            25 |                    9.6  |           5785.59 |
+| Compact_Sticky_K5_W100 |          5 |          3 |            29 |                    8.27 |           5863.83 |
+
+## State Probability Mass Distribution
+- **ELA_Baseline_K8_W10**: {'State_2': '77.4%', 'State_6': '10.6%', 'State_7': '12.0%'}
+- **ELA_Sticky_K8_W100**: {'State_3': '77.6%', 'State_6': '22.4%'}
+- **Pruned_Sticky_K6_W100**: {'State_0': '100.0%'}
+- **Pruned_Extreme_K6_W500**: {'State_0': '22.4%', 'State_2': '77.6%'}
+- **Compact_Sticky_K5_W100**: {'State_0': '77.6%', 'State_1': '22.4%', 'State_3': '0.0%'}

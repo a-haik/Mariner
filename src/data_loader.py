@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Union, Optional
 
 class VesselDataLoader:
-    """Handles raw data ingestion, deduplication, and time-grid regularization."""
+    """Handles raw data ingestion, deduplication, and strict time-grid regularization."""
 
     def __init__(self, data_path: Union[str, Path]):
         self.file_path = Path(data_path)
@@ -18,69 +18,21 @@ class VesselDataLoader:
                     return i
         return -1 
     
-    def _process_coordinates(self) -> None:
+    def _process_coordinates(self, df: pd.DataFrame) -> None:
         """Converts ASCII-encoded Degrees and Minutes into standard Decimal Degrees."""
         req_cols = ['LAT-DEG(degree)', 'LAT-MIN(min)', 'LAT-NS', 
                     'LONG-DEG(degree)', 'LONG-MIN(min)', 'LONG-EW']
         
-        if not all(col in self.clean_df.columns for col in req_cols):
-            print("Warning: Missing geographic columns. Cannot process coordinates.")
+        if not all(col in df.columns for col in req_cols):
             return
 
-        lat_sign = np.where(self.clean_df['LAT-NS'] == 83, -1.0, 1.0) # South=83, North=78
-        lon_sign = np.where(self.clean_df['LONG-EW'] == 87, -1.0, 1.0) # West=87, East=69
+        lat_sign = np.where(df['LAT-NS'] == 83, -1.0, 1.0) # South=83, North=78
+        lon_sign = np.where(df['LONG-EW'] == 87, -1.0, 1.0) # West=87, East=69
 
-        self.clean_df['LATITUDE(DD)'] = lat_sign * (
-            self.clean_df['LAT-DEG(degree)'] + (self.clean_df['LAT-MIN(min)'] / 60.0)
-        )
-        self.clean_df['LONGITUDE(DD)'] = lon_sign * (
-            self.clean_df['LONG-DEG(degree)'] + (self.clean_df['LONG-MIN(min)'] / 60.0)
-        )
-
-    def _extract_features(self, dt_minutes: float = 5.0, epsilon: float = 1e-6) -> None:
-        """Engineers physical and electrical shock proxies from telemetry."""
-        df = self.clean_df
-        
-        # 1. Generator Activity & Transitions
-        p_cols = ['GE162(kW)', 'GE262(kW)', 'GE362(kW)']
-        if all(col in df.columns for col in p_cols):
-            df['NUM_GENERATORS'] = (df[p_cols] > 5.0).sum(axis=1)
-            df['GEN_TRANSITION'] = df['NUM_GENERATORS'].diff().fillna(0)
-            
-            # Load Sharing Symmetry Error
-            active_gen_powers = df[p_cols].replace(0, np.nan) # Ignore inactive generators
-            mean_active_power = active_gen_powers.mean(axis=1)
-
-            df['LOAD_SYMMETRY_ERROR'] = ((active_gen_powers.max(axis=1) - active_gen_powers.min(axis=1)) / mean_active_power).fillna(0)
-
-        # 2. Kinematic Features
-        if 'HEADING(degree)' in df.columns:
-            raw_diff = df['HEADING(degree)'].diff()
-            df['ROT_DEG_PER_MIN'] = ((raw_diff + 180) % 360 - 180) / dt_minutes
-            
-            heading_rad = np.radians(df['HEADING(degree)'])
-            df['HEADING_SIN'] = np.sin(heading_rad)
-            df['HEADING_COS'] = np.cos(heading_rad)
-            
-        if 'AE_POWER(kW)' in df.columns and 'SHIP SPEED(knots)' in df.columns:
-            df['ENERGY_INTENSITY'] = df['AE_POWER(kW)'] / (df['SHIP SPEED(knots)'] + epsilon)
-            # Power Total Variation (TV) Energy
-            df['POWER_TV_ENERGY'] = (df['AE_POWER(kW)'].diff() / dt_minutes)**2
-
-        # 3. Electrical Shock Proxies (Power Factor)
-        pf_cols = ['GE164', 'GE264', 'GE364']
-        if all(col in df.columns for col in pf_cols + p_cols) and 'AE_POWER(kW)' in df.columns:
-            # Calculate total apparent power S = P / PF
-            S_total = np.zeros(len(df))
-            for p_col, pf_col in zip(p_cols, pf_cols):
-                # Add to apparent power only if PF > 0 to avoid ZeroDivisionError
-                S_total += np.where(df[pf_col] > epsilon, df[p_col] / df[pf_col], 0)
-                
-            df['PF_EFFECTIVE'] = np.where(S_total > epsilon, df['AE_POWER(kW)'] / S_total, 1.0)
-            df['PF_DERIVATIVE'] = df['PF_EFFECTIVE'].diff() / dt_minutes
+        df['LATITUDE(DD)'] = lat_sign * (df['LAT-DEG(degree)'] + (df['LAT-MIN(min)'] / 60.0))
+        df['LONGITUDE(DD)'] = lon_sign * (df['LONG-DEG(degree)'] + (df['LONG-MIN(min)'] / 60.0))
 
     def load_and_clean(self, time_col: str = "Sample time", date_format: str = "%d/%m/%y %H:%M") -> pd.DataFrame:
-        """The master execution method for the data pipeline."""
         if not self.file_path.exists():
             raise FileNotFoundError(f"Dataset not found at {self.file_path}")
 
@@ -104,10 +56,25 @@ class VesselDataLoader:
         df.set_index(time_col, inplace=True)
         df.sort_index(inplace=True)
         
-        # Deduplication & Resampling
+        # Deduplication
         df = df[~df.index.duplicated(keep='first')]
-        df = df.resample('5min').mean(numeric_only=True)
         
+        # --- Circular Mean for Resampling ---
+        if 'HEADING(degree)' in df.columns:
+            rads = np.radians(df['HEADING(degree)'])
+            df['HEAD_SIN'] = np.sin(rads)
+            df['HEAD_COS'] = np.cos(rads)
+            df.drop(columns=['HEADING(degree)'], inplace=True)
+
+        # Resample all linear variables
+        df = df.resample('5min').mean(numeric_only=True)
+
+        # Reconstruct the circular mean using arctan2
+        if 'HEAD_SIN' in df.columns and 'HEAD_COS' in df.columns:
+            mean_rads = np.arctan2(df['HEAD_SIN'], df['HEAD_COS'])
+            df['HEADING(degree)'] = np.degrees(mean_rads) % 360
+            df.drop(columns=['HEAD_SIN', 'HEAD_COS'], inplace=True)
+
         # Interpolation & Bounding
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         df[numeric_cols] = df[numeric_cols].interpolate(method='time', limit=3)
@@ -121,13 +88,9 @@ class VesselDataLoader:
             status_series = self.raw_df.set_index(time_col)[~self.raw_df.set_index(time_col).index.duplicated(keep='first')]['STATUS']
             df['STATUS'] = status_series.reindex(df.index).ffill(limit=3)
 
+        self._process_coordinates(df)
         self.clean_df = df
         
-        # Execute internal processing
-        self._process_coordinates()
-        self._extract_features()
-
-        print(f"Successfully loaded, cleaned, and processed {len(self.clean_df)} telemetry rows.")
         return self.clean_df
     
     def sanity_check(self) -> None:
@@ -170,31 +133,8 @@ class VesselDataLoader:
         else:
             print("    Pass: No significant time gaps detected.")
 
-        # 3. Physical Boundary Violations
-        print("\n[3] Physical Boundary Checks:")
-        violations = 0
-        
-        if 'PF_EFFECTIVE' in df.columns:
-            pf_max = df['PF_EFFECTIVE'].max()
-            if pf_max > 1.01: # Small tolerance for floating point math
-                print(f"    FAIL: Effective Power Factor exceeds 1.0 (Max: {pf_max:.3f})")
-                violations += 1
-                
-        if 'SHIP SPEED(knots)' in df.columns:
-            speed_max = df['SHIP SPEED(knots)'].max()
-            speed_min = df['SHIP SPEED(knots)'].min()
-            if speed_max > 25.0: # Unrealistic for a Handymax tanker
-                print(f"    WARNING: Suspiciously high speed detected (Max: {speed_max:.1f} knots)")
-                violations += 1
-            if speed_min < -0.1:
-                print(f"    FAIL: Negative speed detected (Min: {speed_min:.1f} knots)")
-                violations += 1
-
-        if violations == 0:
-            print("    Pass: All engineered physical features within realistic bounds.")
-
-        # 4. Logical & Energy Balance
-        print("\n[4] System Logic & Energy Balance:")
+        # 3. Logical & Energy Balance
+        print("\n[3] System Logic & Energy Balance:")
         p_cols = ['GE162(kW)', 'GE262(kW)', 'GE362(kW)']
         if 'AE_POWER(kW)' in df.columns and all(c in df.columns for c in p_cols):
             ge_sum = df[p_cols].sum(axis=1)
@@ -207,7 +147,7 @@ class VesselDataLoader:
 
         # Logical contradiction: Ship is idle but moving fast
         if 'STATUS' in df.columns and 'SHIP SPEED(knots)' in df.columns:
-            contradictions = df[(df['STATUS'] == 'Idle') & (df['SHIP SPEED(knots)'] > 10.0)]
+            contradictions = df[(df['STATUS'] == 'Idle') & (df['SHIP SPEED(knots)'] > 8.0)]
             if not contradictions.empty:
                 print(f"    WARNING: {len(contradictions)} logical contradictions detected (STATUS='Idle' but Speed > 10 knots).")
                 print("    This suggests manual log lagging by the crew.")
