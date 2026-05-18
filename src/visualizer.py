@@ -6,6 +6,7 @@ import math
 from typing import List, Optional
 import branca.colormap as cm
 import matplotlib.patches as mpatches
+import plotly.graph_objects as go
 
 class VesselVisualizer:
     """Handles all plotting and map generation for vessel telemetry."""
@@ -27,13 +28,12 @@ class VesselVisualizer:
 
             # 2. New Regimes (if they appear in the data)
 
-            'transit_laden': '#55A868',       # Sea Green
-            'transit_ballast': '#81D8D0',     # Light Teal
-            'sea_loitering': "#2653CC",       # Muted Red (High volatility at sea)
-            'port_loading': '#DD8452',        # Orange
-            'port_unloading': '#D65F5F',      # Purple (High power draw)
-            'port_idle': '#EAEAEA',           # Very Light Grey
-            'unknown': '#000000'
+            'Sea_Transit_Laden': '#55A868',       # Sea Green
+            'Sea_Transit_Ballast': '#81D8D0',     # Light Teal
+            'Sea_Loitering': "#2653CC",       # Muted Red (High volatility at sea)
+            'Port_Loading': '#DD8452',        # Orange
+            'Port_Unloading': '#D65F5F',      # Purple (High power draw)
+            'Port_Idle': '#EAEAEA',           # Very Light Grey
         }
 
     def plot_series(self, 
@@ -239,3 +239,96 @@ class VesselVisualizer:
                 ).add_to(event_cluster)
 
         return vessel_map
+    
+    def plot_brick_space(self, registry_df: pd.DataFrame, y_axis_metric: str = 'Intensive_L2_Volatility', include_loitering: bool = True) -> go.Figure:
+        """
+        Constructs an interactive Plotly scatter plot.
+        Args:
+            include_loitering: Strictly toggles between showing the raw physical voyages (True) 
+                               or the synthetically stitched, compressed voyages (False).
+        """
+        if registry_df.empty:
+            raise ValueError("Input registry dataframe is completely empty.")
+            
+        # 1. Enforce Mutual Exclusivity
+        plot_df = registry_df.copy()
+        if include_loitering:
+            # Show the true trips: Drop the synthetic stitched trips
+            plot_df = plot_df[plot_df['Loitering_Handling'] != 'Without_Loitering']
+        else:
+            # Show the compressed trips: Drop the original trips that contain loitering
+            plot_df = plot_df[plot_df['Loitering_Handling'] != 'With_Loitering']
+            
+        fig = go.Figure()
+        unique_phases = plot_df['PHASE'].unique()
+        
+        for phase in unique_phases:
+            phase_df = plot_df[plot_df['PHASE'] == phase]
+            color = self.status_colors.get(phase, '#000000')
+            
+            x_vals = (phase_df['H2_Rate_Lower_kg_h'] + phase_df['H2_Rate_Upper_kg_h']) / 2
+            err_plus = phase_df['H2_Rate_Upper_kg_h'] - phase_df['H2_Rate_Lower_kg_h']
+            
+            hover_text = []
+            for _, row in phase_df.iterrows():
+                is_transit = row['PHASE'] in ['Sea_Transit_Laden', 'Sea_Transit_Ballast']
+                handling_info = f"Loitering Handling: {row['Loitering_Handling']}<br>" if is_transit else ""
+                
+                hover_str = (
+                    f"<b>Phase Block: {row['PHASE']}</b><br>"
+                    f"File Origin: {row['Source_File']}<br>"
+                    f"{handling_info}"
+                    f"Start Timestamp: {row['Start_Time']}<br>"
+                    f"Total Duration: {row['Duration_h']:.2f} h<br>"
+                    f"Mean Power Demand: {row['Mean_Power_kW']:.1f} kW<br>"
+                    f"-----------------------------------<br>"
+                    f"H2 Consumption Rate: [{row['H2_Rate_Lower_kg_h']:.2f} - {row['H2_Rate_Upper_kg_h']:.2f}] kg/h<br>"
+                    f"Total H2 Consumption: [{row['H2_Cons_Lower_kg']:.1f} - {row['H2_Cons_Upper_kg']:.1f}] kg<br>"
+                    f"-----------------------------------<br>"
+                    f"Intensive L1 Power Index (kW): {row.get('Intensive_L1_Power', 0.0):.2f}<br>"
+                    f"Intensive L2 Volatility Index (kW^2/h): {row.get('Intensive_L2_Volatility', 0.0):.2f}"
+                )
+                hover_text.append(hover_str)
+
+            fig.add_trace(go.Scatter(
+                x=x_vals,
+                y=phase_df[y_axis_metric],
+                mode='markers',
+                name=phase,
+                text=hover_text,
+                hoverinfo='text',
+                marker=dict(
+                    size=phase_df['Duration_h'],
+                    sizemode='area',
+                    sizeref=2. * max(plot_df['Duration_h']) / (40.**2),
+                    sizemin=6,
+                    color=color,
+                    symbol='circle',
+                    line=dict(width=1, color='DarkSlateGrey')
+                ),
+                error_x=dict(
+                    type='data',
+                    symmetric=True,
+                    array=err_plus,
+                    arrayminus=np.zeros(len(phase_df)),
+                    color='rgba(120,120,120,0.35)',
+                    thickness=1.5,
+                    width=4
+                )
+            ))
+            
+        fig.update_layout(
+            title=dict(
+                text=f"MARINER Technical Brick Workspace Axis Profile ({y_axis_metric}) | Loitering: {include_loitering}",
+                font=dict(size=14, family="Arial", color="black")
+            ),
+            xaxis_title="Hydrogen Consumption Flow Rate (kg/h) [Error Bars: η=0.55 Baseline → η=0.45 Limit]",
+            yaxis_title=f"PEMFC Degradation Index Target: {y_axis_metric}",
+            template="plotly_white",
+            hovermode='closest',
+            width=1100,
+            height=650,
+            legend_title_text="Operational Regimes"
+        )
+        
+        return fig

@@ -8,6 +8,7 @@ pathlib
 math
 branca
 seaborn
+plotly
 
 # Advanced Modeling & Optimization
 jax
