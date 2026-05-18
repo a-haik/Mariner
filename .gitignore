@@ -12,6 +12,8 @@ __pycache__/
 # Data file
 data/raw/
 data/processed/
+data/hmm_tests/
+*.txt
 *.csv
 *.parquet
 *.dat

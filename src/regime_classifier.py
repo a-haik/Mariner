@@ -6,6 +6,7 @@ from numpyro.infer import SVI, Trace_ELBO, MCMC, NUTS
 from numpyro.infer.autoguide import AutoDelta
 from numpyro.infer.initialization import init_to_value
 from sklearn.cluster import KMeans
+from typing import List
 
 from abc import ABC, abstractmethod
 import pandas as pd
@@ -209,3 +210,94 @@ class BayesianHMMClassifier(BaseRegimeClassifier):
             best_path[t] = backpointers[t+1, best_path[t+1]]
             
         return best_path
+    
+    def generate_diagnostics(self, X_cont: np.ndarray, labels: np.ndarray, feature_names: List[str]) -> pd.DataFrame:
+        """
+        Generates a physical analysis of the learned HMM parameters and sequence.
+        Inverse-transforms scaled parameters back to physical units and calculates
+        state-specific run lengths.
+        """
+        if not self.is_fitted:
+            raise ValueError("Model has not been fitted.")
+
+        print("\n" + "="*70)
+        print(f"MARINER HMM DIAGNOSTICS (K={self.n_components})")
+        print("="*70)
+
+        # 1. Global Temporal Dynamics
+        transitions = np.sum(labels[1:] != labels[:-1])
+        global_mean_dwell = (len(labels) / max(transitions, 1)) * (5 / 60)
+        
+        print(f"Total Sequence Length : {len(labels)} ticks ({len(labels)*5/60:.1f} hrs)")
+        print(f"Total Transitions     : {transitions}")
+        print(f"Global Mean Dwell     : {global_mean_dwell:.2f} hours\n")
+
+        # 2. Run-Length Encoding for State-Specific Dwell Times
+        # Identifies the start indices of every contiguous block
+        changes = np.concatenate([[True], labels[1:] != labels[:-1], [True]])
+        run_indices = np.where(changes)[0]
+        run_lengths = np.diff(run_indices)
+        run_states = labels[run_indices[:-1]]
+
+        # 3. Extract and Inverse Transform Means and StdDevs
+        scaled_mu = np.array(self.model_params['mu'])
+        scaled_sigma = np.array(self.model_params['sigma'])
+        
+        raw_mu = (scaled_mu * self.scaler_std_) + self.scaler_mean_
+        raw_sigma = scaled_sigma * self.scaler_std_ # StdDev scales multiplicatively
+        
+        gen_probs = np.array(self.model_params['gen_probs'])
+        likely_gens = np.argmax(gen_probs, axis=1)
+
+        # 4. Build the State Characteristic DataFrame
+        state_data = []
+        for k in range(self.n_components):
+            # Calculate state-specific dwell time (in hours)
+            state_runs = run_lengths[run_states == k]
+            mean_state_dwell = np.mean(state_runs) * (5 / 60) if len(state_runs) > 0 else 0
+            
+            state_dict = {
+                "State": k, 
+                "Usage_%": f"{(np.sum(labels == k) / len(labels))*100:.1f}%",
+                "Mean_Dwell(h)": round(mean_state_dwell, 2),
+                "Likely_Gens": likely_gens[k]
+            }
+            
+            # Format Mean ± StdDev for physical insight
+            for i, name in enumerate(feature_names):
+                state_dict[name] = f"{raw_mu[k, i]:.1f} ± {raw_sigma[k, i]:.1f}"
+                
+            state_data.append(state_dict)
+
+        df_states = pd.DataFrame(state_data)
+        
+        print("--- LEARNED PHYSICAL EMISSIONS & DWELL TIMES (Raw Units) ---")
+        print(df_states.to_markdown(index=False))
+
+        # 5. The Transition Matrix
+        print("\n--- TRANSITION PROBABILITY MATRIX (A) ---")
+        A = np.array(self.model_params['A'])
+        df_A = pd.DataFrame(A).round(4)
+        df_A.index.name = "From State"
+        df_A.columns = [f"To {c}" for c in df_A.columns]
+        print(df_A.to_markdown())
+
+        return df_states
+    
+    def plot_loss(self):
+        """Plots the ELBO loss curve for SVI optimization."""
+        if not self.is_fitted:
+            raise ValueError("Model has not been fitted.")
+        if self.svi_result is None:
+            print("Loss plotting is only available for the SVI optimization method.")
+            return
+
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(10, 4))
+        plt.plot(self.svi_result.losses, color='#2C3E50', linewidth=2)
+        plt.title(f"SVI ELBO Loss Convergence (K={self.n_components}, Inertia={self.inertia_weight})")
+        plt.xlabel("Iteration")
+        plt.ylabel("Loss (Negative ELBO)")
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show()

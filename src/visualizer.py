@@ -41,15 +41,23 @@ class VesselVisualizer:
                     subplots: bool = False,
                     rolling_window: Optional[str] = None, 
                     secondary_y: Optional[str] = None,
-                    status_col: str = 'STATUS',  # Now fully dynamic!
+                    status_col: str = 'STATUS',
+                    predicted_col: Optional[str] = None, # NEW: Pass the HMM column name here
                     **kwargs) -> tuple:
-        """A flexible plotting tool for time-series data."""
+        """A flexible plotting tool for time-series data with HMM overlay."""
         
         if self.df is None or self.df.empty:
             raise ValueError("Dataframe is empty or not loaded.")
 
-        kwargs.setdefault('figsize', (14, 4 * len(columns) if subplots else 7))
-        fig, axes = plt.subplots(nrows=len(columns) if subplots else 1, ncols=1, **kwargs)
+        # If we have a predicted column, we add one extra row for the step plot
+        n_signal_rows = len(columns) if subplots else 1
+        total_rows = n_signal_rows + (1 if predicted_col else 0)
+        
+        # Adjust height ratio so the discrete step plot is smaller
+        gridspec_kw = {'height_ratios': [3]*n_signal_rows + [1]} if predicted_col else None
+        
+        kwargs.setdefault('figsize', (14, 4 * total_rows))
+        fig, axes = plt.subplots(nrows=total_rows, ncols=1, gridspec_kw=gridspec_kw, **kwargs)
         
         if not isinstance(axes, (list, np.ndarray)):
             axes = [axes]
@@ -57,7 +65,6 @@ class VesselVisualizer:
         prop_cycle = plt.rcParams['axes.prop_cycle']
         colors = prop_cycle.by_key()['color']
         
-        # Use the dynamic status_col parameter
         show_status = status_col in self.df.columns
         if show_status:
             status_changes = (self.df[status_col] != self.df[status_col].shift()).fillna(True)
@@ -67,6 +74,7 @@ class VesselVisualizer:
         all_handles = []
         all_labels = []
 
+        # 1. Plot Continuous Signals
         for i, col in enumerate(columns):
             if col not in self.df.columns:
                 continue
@@ -87,7 +95,7 @@ class VesselVisualizer:
                 all_handles.append(s_line)
                 all_labels.append(f'{col} (Mean {rolling_window})')
 
-            # Add Background Color Blocks
+            # Add Background Color Blocks (Human Status)
             if show_status and (subplots or i == 0):
                 for start, end in zip(change_indices[:-1], change_indices[1:]):
                     current_status = self.df.loc[start, status_col]
@@ -96,24 +104,31 @@ class VesselVisualizer:
 
             plot_ax.set_ylabel(col, color=color if is_secondary else 'black')
 
+        # 2. Plot Discrete HMM Predictions (NEW)
+        if predicted_col and predicted_col in self.df.columns:
+            pred_ax = axes[-1]
+            pred_ax.step(self.df.index, self.df[predicted_col], where='post', color='black', linewidth=2)
+            pred_ax.set_ylabel("HMM State", fontweight='bold')
+            pred_ax.set_yticks(np.unique(self.df[predicted_col].dropna()))
+            pred_ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+        # Generate Unified Legends
         if subplots:
-            for ax in axes:
+            for ax in axes[:n_signal_rows]:
                 ax.legend(loc='upper left')
         else:
             axes[0].legend(all_handles, all_labels, loc='upper left')
 
-        # Generate Unified Legend for Regimes
         if show_status:
             unique_statuses = self.df[status_col].dropna().astype(str).str.lower().unique()
             patches = [mpatches.Patch(color=color, label=status.title(), alpha=0.3) 
                        for status, color in self.status_colors.items() 
                        if status in unique_statuses]
-            
             fig.legend(handles=patches, title=f"Vessel Status ({status_col})", 
                        loc='center left', bbox_to_anchor=(1, 0.5))
 
         axes[-1].set_xlabel("Time")
-        fig.suptitle(f"Time-Series Analysis: {', '.join(columns)}", y=1.02)
+        fig.suptitle(f"MARINER Telemetry vs. Unsupervised HMM ({predicted_col})", y=1.02, fontweight='bold')
         fig.tight_layout()
             
         return fig, axes
