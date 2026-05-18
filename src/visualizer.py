@@ -15,25 +15,25 @@ class VesselVisualizer:
         
         # Pragmatic, physically-grouped color palette
         self.status_colors = {
-            # 1. Transit (Cool colors)
-            'sea going': '#4C72B0',   # Standard Blue
+
+            # 1. Original Statuses
             'laden': '#55A868',       # Sea Green
             'ballast': '#81D8D0',     # Light Teal
-            
-            # 2. Tank Operations at Sea (Warm/Purple colors)
-            'tank cleaning': '#C44E52', # Muted Red
-            'tank heating': '#8172B3',  # Muted Purple
-            'gas freeing': '#CCB974',   # Khaki/Yellowish
-            
-            # 3. Cargo Operations (Orange/Brown colors)
+    
             'loading': '#DD8452',       # Orange
-            'unloading': '#D65F5F',     # Coral/Light Orange
             'discharging': '#D65F5F',   # Same as unloading
-            
-            # 4. Maneuvering and Idle (Red for high stress, Grey for baseline)
-            'at port in/out': '#8C2D04', # Dark, intense Red (Highest Load)
-            'at harbour': '#C4C4C4',     # Light Grey
-            'idle': '#EAEAEA'            # Very Light Grey
+        
+            'idle': '#EAEAEA',            # Very Light Grey
+
+            # 2. New Regimes (if they appear in the data)
+
+            'transit_laden': '#55A868',       # Sea Green
+            'transit_ballast': '#81D8D0',     # Light Teal
+            'sea_loitering': "#2653CC",       # Muted Red (High volatility at sea)
+            'port_loading': '#DD8452',        # Orange
+            'port_unloading': '#D65F5F',      # Purple (High power draw)
+            'port_idle': '#EAEAEA',           # Very Light Grey
+            'unknown': '#000000'
         }
 
     def plot_series(self, 
@@ -42,22 +42,17 @@ class VesselVisualizer:
                     rolling_window: Optional[str] = None, 
                     secondary_y: Optional[str] = None,
                     status_col: str = 'STATUS',
-                    predicted_col: Optional[str] = None, # NEW: Pass the HMM column name here
+
                     **kwargs) -> tuple:
-        """A flexible plotting tool for time-series data with HMM overlay."""
+        """A flexible plotting tool for time-series"""
         
         if self.df is None or self.df.empty:
             raise ValueError("Dataframe is empty or not loaded.")
 
-        # If we have a predicted column, we add one extra row for the step plot
         n_signal_rows = len(columns) if subplots else 1
-        total_rows = n_signal_rows + (1 if predicted_col else 0)
         
-        # Adjust height ratio so the discrete step plot is smaller
-        gridspec_kw = {'height_ratios': [3]*n_signal_rows + [1]} if predicted_col else None
-        
-        kwargs.setdefault('figsize', (14, 4 * total_rows))
-        fig, axes = plt.subplots(nrows=total_rows, ncols=1, gridspec_kw=gridspec_kw, **kwargs)
+        kwargs.setdefault('figsize', (14, 4 * n_signal_rows))
+        fig, axes = plt.subplots(nrows=n_signal_rows, ncols=1, **kwargs)
         
         if not isinstance(axes, (list, np.ndarray)):
             axes = [axes]
@@ -104,14 +99,6 @@ class VesselVisualizer:
 
             plot_ax.set_ylabel(col, color=color if is_secondary else 'black')
 
-        # 2. Plot Discrete HMM Predictions (NEW)
-        if predicted_col and predicted_col in self.df.columns:
-            pred_ax = axes[-1]
-            pred_ax.step(self.df.index, self.df[predicted_col], where='post', color='black', linewidth=2)
-            pred_ax.set_ylabel("HMM State", fontweight='bold')
-            pred_ax.set_yticks(np.unique(self.df[predicted_col].dropna()))
-            pred_ax.grid(axis='y', linestyle='--', alpha=0.7)
-
         # Generate Unified Legends
         if subplots:
             for ax in axes[:n_signal_rows]:
@@ -128,7 +115,7 @@ class VesselVisualizer:
                        loc='center left', bbox_to_anchor=(1, 0.5))
 
         axes[-1].set_xlabel("Time")
-        fig.suptitle(f"MARINER Telemetry vs. Unsupervised HMM ({predicted_col})", y=1.02, fontweight='bold')
+        fig.suptitle("MARINER Telemetry", y=1.02, fontweight='bold')
         fig.tight_layout()
             
         return fig, axes
@@ -173,7 +160,7 @@ class VesselVisualizer:
         return vertices
 
     def plot_trajectory_folium(self, status_col: str = 'STATUS', arrow_step: int = 10, arrow_size: float = 0.002) -> folium.Map:
-        """Plots the vessel trajectory on an interactive Folium map."""
+        """Plots the vessel trajectory on an interactive Folium map with true Arrival/Departure markers."""
         from folium import plugins
         if self.df is None or 'LATITUDE(DD)' not in self.df.columns:
             raise ValueError("Coordinates not processed.")
@@ -212,30 +199,43 @@ class VesselVisualizer:
         
         colormap.add_to(vessel_map)
 
-        # Detect & Cluster Arrivals and Departures using the dynamic status column
+        # Detect true Arrivals and Departures
         if status_col in geo_data.columns:
-            # Added new regimes to the port/sea mapping logic
-            port_states = ['idle', 'loading', 'discharging', 'at harbour', 'unloading', 'at port in/out']
-            sea_states = ['laden', 'ballast', 'sea going', 'tank cleaning', 'tank heating', 'gas freeing']
-
-            status_lower = geo_data[status_col].str.lower()
-            state_map = pd.Series(np.nan, index=geo_data.index)
-            state_map[status_lower.isin(port_states)] = 0
-            state_map[status_lower.isin(sea_states)] = 1
-            state_map = state_map.ffill()
-
-            transitions = state_map.diff()
-            departures = geo_data[transitions == 1]
-            arrivals = geo_data[transitions == -1]
+            # Robust mapping that covers both the raw logs and our new engineered phases
+            port_states = [
+                'idle', 'loading', 'discharging', 'unloading',
+                'port_idle', 'port_loading', 'port_unloading',
+            ]
+            
+            status_lower = geo_data[status_col].astype(str).str.lower()
+            
+            # Create a boolean series: True if at port, False if at sea
+            is_at_port = status_lower.isin(port_states)
+            
+            # Shift the boolean series to detect the exact moment of state change
+            # True -> False = Departure (Port to Sea)
+            # False -> True = Arrival (Sea to Port)
+            port_transitions = is_at_port.astype(int).diff()
+            
+            departures = geo_data[port_transitions == -1]
+            arrivals = geo_data[port_transitions == 1]
 
             event_cluster = plugins.MarkerCluster(name="Port Events").add_to(vessel_map)
 
             for i, (timestamp, row) in enumerate(departures.iterrows(), start=1):
-                popup_html = f"<b>Departure #{i}</b><br>Time: {timestamp}<br>Regime: {row[status_col]}"
-                folium.Marker(location=[row['LATITUDE(DD)'], row['LONGITUDE(DD)']], popup=folium.Popup(popup_html, max_width=250), icon=folium.Icon(color='green', icon='arrow-up', prefix='fa')).add_to(event_cluster)
+                popup_html = f"<b>Departure #{i}</b><br>Time: {timestamp}<br>Status: {row[status_col]}"
+                folium.Marker(
+                    location=[row['LATITUDE(DD)'], row['LONGITUDE(DD)']], 
+                    popup=folium.Popup(popup_html, max_width=250), 
+                    icon=folium.Icon(color='green', icon='arrow-up', prefix='fa')
+                ).add_to(event_cluster)
 
             for i, (timestamp, row) in enumerate(arrivals.iterrows(), start=1):
-                popup_html = f"<b>Arrival #{i}</b><br>Time: {timestamp}<br>Regime: {row[status_col]}"
-                folium.Marker(location=[row['LATITUDE(DD)'], row['LONGITUDE(DD)']], popup=folium.Popup(popup_html, max_width=250), icon=folium.Icon(color='red', icon='arrow-down', prefix='fa')).add_to(event_cluster)
+                popup_html = f"<b>Arrival #{i}</b><br>Time: {timestamp}<br>Status: {row[status_col]}"
+                folium.Marker(
+                    location=[row['LATITUDE(DD)'], row['LONGITUDE(DD)']], 
+                    popup=folium.Popup(popup_html, max_width=250), 
+                    icon=folium.Icon(color='red', icon='arrow-down', prefix='fa')
+                ).add_to(event_cluster)
 
         return vessel_map
