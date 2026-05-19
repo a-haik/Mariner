@@ -12,37 +12,6 @@ class MissionProfiler:
         self.speed_threshold = speed_threshold
         self.dt_hours = dt_min / 60.0
 
-        
-    def classify_phases(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Deterministic mapping with Kinematic Fallback."""
-        df = df.copy()
-        raw_status = df['STATUS'].astype(str).str.lower().fillna('unknown')
-        speed = df['SHIP SPEED(knots)'].fillna(0.0)
-
-        is_moving = speed > self.speed_threshold
-
-        conditions = [
-            raw_status.isin(['laden', 'sea going']) | ((raw_status == 'unknown') & (speed > self.speed_threshold)),
-            raw_status.isin(['ballast']),
-            (raw_status == 'idle') & is_moving,
-            ~is_moving & raw_status.isin(['loading']),
-            ~is_moving & raw_status.isin(['discharging', 'unloading']),
-            ~is_moving & raw_status.isin(['idle', 'port_idle', 'unknown']) 
-        ]
-        
-        choices = [
-            'Sea_Transit_Laden', 'Sea_Transit_Ballast', 'Sea_Loitering',
-            'Port_Loading', 'Port_Unloading', 'Port_Idle'
-        ]
-        
-        df['PHASE'] = np.select(conditions, choices, default='Unknown')
-        
-        # Retain trip logic for localized variance tracking (The Bricks)
-        is_sea = df['PHASE'].str.startswith('Sea_')
-        df['stay_id'] = (is_sea != is_sea.shift()).cumsum()
-        
-        return df
-    
     def _compute_normalized_rainflow(self, power_series: pd.Series, duration_h: float, k: float = 2.0) -> float:
         """
         Calculates the intensive Expected Fatigue Rate using Rainflow counting.
@@ -79,53 +48,118 @@ class MissionProfiler:
             'Mean_Power_kW': mean_power,
             'H2_Rate_Lower_kg_h': mean_power / (PHYSICS.ETA_UPPER * PHYSICS.LHV_H2_KWH_KG),
             'H2_Rate_Upper_kg_h': mean_power / (PHYSICS.ETA_LOWER * PHYSICS.LHV_H2_KWH_KG),
-            'Fatigue_Damage_Rate ': normalized_fatigue_rate,
+            'Fatigue_Damage_Rate': normalized_fatigue_rate,
             'Mean_Power_Fluctuation_Intensity': df_chunk['POWER_TV_ENERGY'].abs().mean(),
         }
         return metrics
+        
+    def classify_phases(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Deterministic mapping using block-level kinematic analysis.
+        
+        'is_moving' is derived from the mean speed of the entire contiguous 
+        status block to ensure stability in phase classification.
+        """
+        df = df.copy()
+        raw_status = df['STATUS'].astype(str).str.lower().fillna('unknown')
+        speed = df['SHIP SPEED(knots)'].fillna(0.0)
 
-    def generate_phase_registry(self, df: pd.DataFrame, source_file_name: str = "Unknown") -> pd.DataFrame:
-        """
-        Localized Aggregation for Brick Visualization.
-        Reconstructs the discrete blocks required for plot_brick_space.
-        """
+        # 1. Identify contiguous blocks based on raw status
+        # This creates an ID that increments every time the status changes
+        status_block_id = (raw_status != raw_status.shift()).cumsum()
+
+        # 2. Calculate the mean speed for each block and map it to all rows in that block
+        block_mean_speed = speed.groupby(status_block_id).transform('mean')
+
+        # 3. Define is_moving based on the block's aggregate speed
+        is_moving = block_mean_speed > self.speed_threshold
+
+        # 4. Apply classification logic
+        # Note: 'unknown' status is handled via fallback to kinematic data (is_moving)
+        conditions = [
+            raw_status.isin(['laden', 'sea going']) | ((raw_status == 'unknown') & is_moving),
+            raw_status.isin(['ballast']),
+            (raw_status == 'idle') & is_moving,
+            ~is_moving & raw_status.isin(['loading']),
+            ~is_moving & raw_status.isin(['discharging', 'unloading']),
+            ~is_moving & raw_status.isin(['idle', 'port_idle', 'unknown']) 
+        ]
+        
+        choices = [
+            'Sea_Transit_Laden', 'Sea_Transit_Ballast', 'Sea_Loitering',
+            'Port_Loading', 'Port_Unloading', 'Port_Idle'
+        ]
+        
+        # default='Unknown' ensures that if no conditions are met, it is explicitly flagged
+        df['PHASE'] = np.select(conditions, choices, default='Unknown')
+        
+        # 5. Retain trip logic for localized variance tracking (The Bricks)
+        is_sea = df['PHASE'].str.startswith('Sea_')
+        df['stay_id'] = (is_sea != is_sea.shift()).cumsum()
+        
+        return df
+
+    def generate_block_registry(self, df: pd.DataFrame, source_file_name: str = "Unknown", 
+                                merge_loitering: bool = True, unify_port_ops: bool = False) -> pd.DataFrame:
         if 'stay_id' not in df.columns:
             df = self.classify_phases(df)
             
         registry_entries = []
-        stay_ids = df['stay_id'].unique()
+        unique_ids = df['stay_id'].unique()
         
-        # Exclude partial boundary blocks at the start and end
-        valid_stay_ids = stay_ids[1:-1] if len(stay_ids) > 2 else stay_ids
+        # Exclude partial boundary blocks (The first and last stay_ids are often truncated)
+        valid_stay_ids = unique_ids[1:-1] if len(unique_ids) > 2 else []
 
         for s_id in valid_stay_ids:
-            group = df[df['stay_id'] == s_id]
+            group = df[df['stay_id'] == s_id].copy()
+            if group.empty:
+                continue
+                
             is_sea_block = group['PHASE'].iloc[0].startswith('Sea_')
             
-            if not is_sea_block:
-                for phase_label, sub_group in group.groupby('PHASE'):
-                    metrics = self._compute_metrics(sub_group, source_file_name)
+            # --- 1. Sea Logic (Transit & Loitering) ---
+            if is_sea_block:
+                # Identify the dominant Transit phase for this block (Laden vs Ballast)
+                transit_phases = group[group['PHASE'].str.contains('Transit')]['PHASE']
+                base_phase = transit_phases.mode()[0] if not transit_phases.empty else 'Sea_Transit_Laden'
+                
+                # Normalization: Force all Transit phases to the base_phase
+                # This ensures Transit1 -> Transit2 are merged even if Loitering is between them
+                group.loc[group['PHASE'].str.contains('Transit'), 'PHASE'] = base_phase
+                
+                if merge_loitering:
+                    # Force everything (including Loitering) to base_phase
+                    group['PHASE'] = base_phase
+                    
+                # Group and compute
+                for phase, sub in group.groupby('PHASE'):
+                    metrics = self._compute_metrics(sub, source_file_name)
                     metrics.update({
                         'Stay_ID': s_id, 
-                        'PHASE': phase_label, 
+                        'PHASE': phase, 
+                        'Loitering_Handling': 'Merged' if merge_loitering else 'Separated'
                     })
                     registry_entries.append(metrics)
+
+            # --- 2. Port Logic (Idle & Ops) ---
             else:
-                # Determine primary transit mode for this sea block
-                is_laden = (group['PHASE'] == 'Sea_Transit_Laden').sum() >= (group['PHASE'] == 'Sea_Transit_Ballast').sum()
-                base_phase = 'Sea_Transit_Laden' if is_laden else 'Sea_Transit_Ballast'
-                
-                # Metric 1: The true physical trip (With Loitering)
-                metrics_with = self._compute_metrics(group, source_file_name)
-                metrics_with.update({'Stay_ID': s_id, 'PHASE': base_phase, 'With_Loitering': True})
-                registry_entries.append(metrics_with)
-            
-                # Metric 2: The compressed synthetic trip (Without Loitering)
-                group_without = group[group['PHASE'] != 'Sea_Loitering']
-                if not group_without.empty:
-                    metrics_without = self._compute_metrics(group_without, source_file_name)
-                    metrics_without.update({'Stay_ID': s_id, 'PHASE': base_phase, 'Loitering_Handling': 'Without_Loitering'})
-                    registry_entries.append(metrics_without)
+                if unify_port_ops:
+                    # Identify the dominant operation (excluding Port_Idle)
+                    ops = group[~group['PHASE'].isin(['Port_Idle'])]
+                    main_op = ops['PHASE'].mode()[0] if not ops.empty else 'Port_Idle'
+                    
+                    # Force the whole block to the main operation
+                    group['PHASE'] = main_op
+                    
+                    metrics = self._compute_metrics(group, source_file_name)
+                    metrics.update({'Stay_ID': s_id, 'PHASE': main_op, 'Port_Handling': 'Unified'})
+                    registry_entries.append(metrics)
+                else:
+                    # Keep everything distinct (Port_Idle, Port_Loading, etc.)
+                    for phase, sub in group.groupby('PHASE'):
+                        metrics = self._compute_metrics(sub, source_file_name)
+                        metrics.update({'Stay_ID': s_id, 'PHASE': phase, 'Port_Handling': 'Separated'})
+                        registry_entries.append(metrics)
                     
         return pd.DataFrame(registry_entries)
 
