@@ -184,10 +184,10 @@ def plot_trajectory_folium(df: pd.DataFrame, status_col: str = 'STATUS', arrow_s
     return vessel_map
 
 # ---------------------------------------------------------
-# Aggregated (Brick & Statistics) Visualizations
+# Aggregated (Blocks & Modes) Visualizations
 # ---------------------------------------------------------
 
-def plot_brick_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Fatigue_Damage_Rate') -> go.Figure:
+def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate') -> go.Figure:
     """Constructs a scatter plot for individual physical blocks across datasets."""
     if registry_df.empty:
         raise ValueError("Input registry dataframe is completely empty.")
@@ -196,20 +196,20 @@ def plot_brick_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Fatigue_Da
     max_duration = registry_df['Duration_h'].max()
     sizeref_val = 2. * max_duration / (40.**2) 
     
-    for phase in registry_df['PHASE'].unique():
-        phase_df = registry_df[registry_df['PHASE'] == phase]
-        color = COLOR.status_colors.get(phase, '#000000')
+    for mode in registry_df['MODE'].unique():
+        mode_df = registry_df[registry_df['MODE'] == mode]
+        color = COLOR.status_colors.get(mode, '#000000')
         
-        x_mid = (phase_df['H2_Rate_Lower_kg_h'] + phase_df['H2_Rate_Upper_kg_h']) / 2.0
-        err_val = phase_df['H2_Rate_Upper_kg_h'] - x_mid
+        x_mid = (mode_df['H2_Rate_Lower_kg_h'] + mode_df['H2_Rate_Upper_kg_h']) / 2.0
+        err_val = mode_df['H2_Rate_Upper_kg_h'] - x_mid
         
         hover_text = []
-        for _, row in phase_df.iterrows():
-            is_transit = row['PHASE'] in ['Sea_Transit_Laden', 'Sea_Transit_Ballast']
+        for _, row in mode_df.iterrows():
+            is_transit = row['MODE'] in ['Sea_Transit_Laden', 'Sea_Transit_Ballast']
             handling_info = f"Handling: {row.get('Loitering_Handling')}<br>" if is_transit else ""
             
             hover_str = (
-                f"<b>Phase Block: {row['PHASE']}</b><br>"
+                f"<b>Mode Block: {row['MODE']}</b><br>"
                 f"File Origin: {row['Source_File']}<br>"
                 f"{handling_info}"
                 f"Start Timestamp: {row['Start_Time']}<br>"
@@ -217,15 +217,15 @@ def plot_brick_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Fatigue_Da
                 f"Mean Power Demand: {row['Mean_Power_kW']:.1f} kW<br>"
                 f"-----------------------------------<br>"
                 f"H2 Rate: [{row['H2_Rate_Lower_kg_h']:.2f} - {row['H2_Rate_Upper_kg_h']:.2f}] kg/h<br>"
-                f"Fatigue Damage Rate: {row.get('Fatigue_Damage_Rate', 0.0):.4f} (/s)<br>"
+                f"Fatigue Damage Rate: {row.get('Relative_Fatigue_Activity_Rate', 0.0):.4f} (/s)<br>"
                 f"Power Fluctuation: {row.get('Mean_Power_Fluctuation_Intensity', 0.0):.2f} (kW²/s²)<br>"
             )
             hover_text.append(hover_str)
 
         fig.add_trace(go.Scatter(
-            x=x_mid, y=phase_df[y_axis_metric], mode='markers', name=phase,
-            text=hover_text, hoverinfo='text', legendgroup="Phases", legendgrouptitle_text="Operational Regimes",
-            marker=dict(size=phase_df['Duration_h'], sizemode='area', sizeref=sizeref_val, sizemin=4, color=color, line=dict(width=1, color='DarkSlateGrey')),
+            x=x_mid, y=mode_df[y_axis_metric], mode='markers', name=mode,
+            text=hover_text, hoverinfo='text', legendgroup="Modes", legendgrouptitle_text="Operational Regimes",
+            marker=dict(size=mode_df['Duration_h'], sizemode='area', sizeref=sizeref_val, sizemin=4, color=color, line=dict(width=1, color='DarkSlateGrey')),
             error_x=dict(type='data', symmetric=True, array=err_val, color='rgba(120,120,120,0.35)', thickness=1.5, width=4)
         ))
         
@@ -237,14 +237,14 @@ def plot_brick_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Fatigue_Da
         ))
         
     fig.update_layout(
-        title=dict(text=f"MARINER Technical Brick Workspace ({y_axis_metric})", font=dict(size=14, color="black")),
+        title=dict(text=f"MARINER Technical Block Workspace ({y_axis_metric})", font=dict(size=14, color="black")),
         xaxis_title=rf"Expected H2 Flow Rate (kg/h) [Error Bars: η ∈ [{PHYSICS.ETA_LOWER:.2f}, {PHYSICS.ETA_UPPER:.2f}]]",
         yaxis_title=f"PEMFC Degradation Index: {y_axis_metric}",
         template="plotly_white", hovermode='closest', width=1100, height=650
     )
     return fig
 
-def plot_phase_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Fatigue_Damage_Rate') -> go.Figure:
+def plot_mode_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate') -> go.Figure:
     """Plots aggregated expected values for global operational states."""
     if stats_df.empty:
         raise ValueError("Statistics DataFrame is empty.")
@@ -253,27 +253,27 @@ def plot_phase_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Fatigue_
     fig = go.Figure()
     sizeref_val = 2. * max(stats_df['Total_Logged_Hours'] / total_time) / (50.**2)
 
-    for phase, row in stats_df.iterrows():
-        if phase == 'Unknown':
+    for mode, row in stats_df.iterrows():
+        if mode == 'Unknown':
              continue
             
-        color = COLOR.status_colors.get(phase, '#333333')
+        color = COLOR.status_colors.get(mode, '#333333')
         time_fraction = row['Total_Logged_Hours'] / total_time
         h2_mid = (row['Mean_H2_Rate_Lower_kg_h'] + row['Mean_H2_Rate_Upper_kg_h']) / 2.0
         err_val = row['Mean_H2_Rate_Upper_kg_h'] - h2_mid
 
         hover_text = (
-            f"<b>{phase}</b><br>"
+            f"<b>{mode}</b><br>"
             f"Time Fraction: {time_fraction*100:.1f}% ({row['Total_Logged_Hours']:.1f} hrs)<br>"
             f"Mean Power: {row['Mean_Power_kW']:.1f} kW<br>"
             f"H2 Rate: [{row['Mean_H2_Rate_Lower_kg_h']:.2f} - {row['Mean_H2_Rate_Upper_kg_h']:.2f}] kg/h<br>"
-            f"Fatigue Damage Rate: {row['Fatigue_Damage_Rate']:.4f} (/s)<br>"
-            f"Power Fluctuation: {row['Mean_Power_Fluctuation_Intensity']:.2f} (kW²/s²)<br>"
+            f"Fatigue Damage Rate: {row['Relative_Fatigue_Activity_Rate']:.4f} (/h)<br>"
+            f"Power Fluctuation: {row['Mean_Power_Fluctuation_Intensity']:.2f} (kW^3/h^3)<br>"
         )
 
         fig.add_trace(go.Scatter(
-            x=[h2_mid], y=[row[y_axis_metric]], mode='markers', name=phase, hoverinfo='text', hovertext=[hover_text],
-            legendgroup="Phases", legendgrouptitle_text="Aggregated Regimes",
+            x=[h2_mid], y=[row[y_axis_metric]], mode='markers', name=mode, hoverinfo='text', hovertext=[hover_text],
+            legendgroup="Modes", legendgrouptitle_text="Aggregated Regimes",
             marker=dict(size=[time_fraction], sizemode='area', sizeref=sizeref_val, sizemin=10, color=color, line=dict(width=1.5, color='DarkSlateGrey')),
             error_x=dict(type='data', array=[err_val], arrayminus=[err_val], color='rgba(100,100,100,0.5)', thickness=2, width=5)
         ))
@@ -285,7 +285,7 @@ def plot_phase_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Fatigue_
         ))
 
     fig.update_layout(
-        title="Global Phase Statistics: H2 Flow vs PEMFC Degradation",
+        title="Global Mode Statistics: H2 Flow vs PEMFC Degradation",
         xaxis_title=rf"Expected H2 Flow Rate (kg/h) [Error Bars: η ∈ [{PHYSICS.ETA_LOWER:.2f}, {PHYSICS.ETA_UPPER:.2f}]]",
         yaxis_title=f"PEMFC Degradation Index: {y_axis_metric}",
         template="plotly_white", hovermode='closest', width=1100, height=650

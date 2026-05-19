@@ -10,6 +10,8 @@ class PhysicalConstants:
     ETA_LOWER: float = 0.45       # Degraded / Worst Case Efficiency
     EPSILON: float = 1e-6         # Small constant to prevent division by zero
     SPEED_THRESHOLD_KNOTS: float = 1.0  # Threshold to distinguish between 'In Port' and 'At Sea'
+    P_BASE_MODULE_KW: float = 200.0  # Normalized to a single 200kW building block
+    FATIGUE_EXPONENT_K: float = 2.0
 
 @dataclass(frozen=True)
 class FilterPresets:
@@ -23,7 +25,7 @@ class FilterPresets:
         object.__setattr__(self, 'BUTTER_DEFAULT', {'order': 2, 'cutoff': 0.1})
 
 @dataclass(frozen=True)
-class ColorPresets:
+class ColorPalette:
     status_colors = {
             # 1. Original Statuses
             'laden': '#55A868',       # Sea Green
@@ -44,4 +46,4 @@ class ColorPresets:
 # Instantiate globally accessible config objects
 PHYSICS = PhysicalConstants()
 FILTERS = FilterPresets()
-COLOR = ColorPresets()
+COLOR = ColorPalette()
