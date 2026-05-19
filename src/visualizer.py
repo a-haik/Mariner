@@ -1,3 +1,4 @@
+# src/visualizer.py
 import matplotlib.pyplot as plt
 import folium
 import pandas as pd
@@ -7,6 +8,7 @@ from typing import List, Optional
 import branca.colormap as cm
 import matplotlib.patches as mpatches
 import plotly.graph_objects as go
+from src.config import COLOR, PHYSICS
 
 class VesselVisualizer:
     """Handles all plotting and map generation for vessel telemetry."""
@@ -15,26 +17,7 @@ class VesselVisualizer:
         self.df = df
         
         # Pragmatic, physically-grouped color palette
-        self.status_colors = {
-
-            # 1. Original Statuses
-            'laden': '#55A868',       # Sea Green
-            'ballast': '#81D8D0',     # Light Teal
-    
-            'loading': '#DD8452',       # Orange
-            'discharging': '#D65F5F',   # Same as unloading
-        
-            'idle': '#EAEAEA',            # Very Light Grey
-
-            # 2. New Regimes (if they appear in the data)
-
-            'Sea_Transit_Laden': '#55A868',       # Sea Green
-            'Sea_Transit_Ballast': '#81D8D0',     # Light Teal
-            'Sea_Loitering': "#2653CC",       # Muted Red (High volatility at sea)
-            'Port_Loading': '#DD8452',        # Orange
-            'Port_Unloading': '#D65F5F',      # Purple (High power draw)
-            'Port_Idle': '#EAEAEA',           # Very Light Grey
-        }
+        self.status_colors = COLOR.status_colors
 
     def plot_series(self, 
                     columns: List[str], 
@@ -240,7 +223,7 @@ class VesselVisualizer:
 
         return vessel_map
     
-    def plot_brick_space(self, registry_df: pd.DataFrame, y_axis_metric: str = 'Intensive_L2_Volatility') -> go.Figure:
+    def plot_brick_space(self, registry_df: pd.DataFrame, y_axis_metric: str = 'Normalized_Fatigue_Rate', include_loitering: bool = True) -> go.Figure:
         """
         Constructs an interactive Plotly scatter plot for individual physical blocks.
         """
@@ -268,7 +251,7 @@ class VesselVisualizer:
             hover_text = []
             for _, row in phase_df.iterrows():
                 is_transit = row['PHASE'] in ['Sea_Transit_Laden', 'Sea_Transit_Ballast']
-                handling_info = f"Loitering Handling: {row.get('Loitering_Handling', 'N/A')}<br>" if is_transit else ""
+                handling_info = f"With Loitering: {row.get('With_Loitering')}<br>" if is_transit else ""
                 
                 hover_str = (
                     f"<b>Phase Block: {row['PHASE']}</b><br>"
@@ -279,7 +262,9 @@ class VesselVisualizer:
                     f"Mean Power Demand: {row['Mean_Power_kW']:.1f} kW<br>"
                     f"-----------------------------------<br>"
                     f"H2 Rate: [{row['H2_Rate_Lower_kg_h']:.2f} - {row['H2_Rate_Upper_kg_h']:.2f}] kg/h<br>"
-                    f"L2 Volatility: {row.get('Intensive_L2_Volatility', 0.0):.2f}"
+                    f"Fatigue Damage Rate: {row.get('Fatigue_Damage_Rate', 0.0):.4f} (/s)<br>"
+                    f"Power Fluctuation Intensity: {row.get('Mean_Power_Fluctuation_Intensity', 0.0):.2f}(kW^2/s^2)<br>"
+
                 )
                 hover_text.append(hover_str)
 
@@ -312,7 +297,7 @@ class VesselVisualizer:
             
         # 2. Inject Dummy Traces for the Size Legend
         legend_sizes_h = [
-            max(1.0, round(plot_df['Duration_h'].quantile(0.1))), 
+            round(plot_df['Duration_h'].quantile(0.1)),
             round(plot_df['Duration_h'].median()), 
             round(max_duration)
         ]
@@ -338,18 +323,18 @@ class VesselVisualizer:
                 text=f"MARINER Technical Brick Workspace Axis Profile ({y_axis_metric})",
                 font=dict(size=14, family="Arial", color="black")
             ),
-            xaxis_title="Hydrogen Consumption Flow Rate (kg/h) [Error Bars: η=0.55 → η=0.45]",
-            yaxis_title=f"PEMFC Degradation Index Target: {y_axis_metric}",
+            xaxis_title=rf"Expected Hydrogen Flow Rate (kg/h) [Error Bars: η ∈ [{PHYSICS.ETA_LOWER:.2f}, {PHYSICS.ETA_UPPER:.2f}]]",
+            yaxis_title=f"PEMFC Degradation Index: {y_axis_metric}",
             template="plotly_white",
             hovermode='closest',
             width=1100,
-            height=650
+            height=650,
         )
         
         return fig
 
 
-    def plot_phase_statistics(self, stats_df: pd.DataFrame) -> go.Figure:
+    def plot_phase_statistics(self, stats_df: pd.DataFrame, y_axis_metric: str = 'Normalized_Fatigue_Rate') -> go.Figure:
         """
         Plots aggregated expected values for global operational states.
         Bubble size represents the fractional time spent in that state.
@@ -379,12 +364,13 @@ class VesselVisualizer:
                 f"Time Fraction: {time_fraction*100:.1f}% ({row['Total_Logged_Hours']:.1f} hrs)<br>"
                 f"Mean Power: {row['Mean_Power_kW']:.1f} kW<br>"
                 f"H2 Rate: [{h2_lower:.2f} - {h2_upper:.2f}] kg/h<br>"
-                f"L2 Volatility: {row['Mean_L2_Volatility']:.2f}"
+                f"Fatigue Damage Rate: {row['Fatigue_Damage_Rate']:.4f} (/s)<br>"
+                f"Power Fluctuation Intensity: {row['Mean_Power_Fluctuation_Intensity']:.2f}(kW^2/s^2)<br>"
             )
 
             fig.add_trace(go.Scatter(
                 x=[h2_mid],
-                y=[row['Mean_L2_Volatility']],
+                y=[row['Mean_Power_Fluctuation_Intensity']],
                 mode='markers', # Stripped text labels to maintain clean layout
                 name=phase,
                 hoverinfo='text',
@@ -424,9 +410,9 @@ class VesselVisualizer:
             ))
 
         fig.update_layout(
-            title="Global Phase Statistics: Expected H2 Flow vs L2 Volatility",
-            xaxis_title="Expected Hydrogen Flow Rate (kg/h) [Error Bars: η=0.55 → η=0.45]",
-            yaxis_title="Expected Intensive L2 Volatility (kW²/h)",
+            title="Global Phase Statistics: H2 Flow vs PEMFC Degradation",
+            xaxis_title=rf"Expected Hydrogen Flow Rate (kg/h) [Error Bars: η ∈ [{PHYSICS.ETA_LOWER:.2f}, {PHYSICS.ETA_UPPER:.2f}]]",
+            yaxis_title=f"PEMFC Degradation Index: {y_axis_metric}",
             template="plotly_white",
             hovermode='closest',
             width=1100,

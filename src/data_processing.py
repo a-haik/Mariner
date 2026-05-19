@@ -1,67 +1,40 @@
+# src/data_processing.py
 import pandas as pd
 import numpy as np
 from scipy.signal import savgol_filter, butter, filtfilt
-from typing import Literal
+from typing import Literal, List
+from .config import PHYSICS, FILTERS
 
-class DataProcessor:
-    """
-    Acts as the Physics/Feature layer. 
-    Applies signal processing and derives mission-critical metrics for PEMFC AST.
-    """
+def calc_trig_headings(df: pd.DataFrame) -> pd.DataFrame:
+    """Calculates trigonometric encodings for vessel heading."""
+    if 'HEADING(degree)' in df.columns:
+        rads = np.radians(df['HEADING(degree)'])
+        return df.assign(
+            HEADING_SIN=np.sin(rads),
+            HEADING_COS=np.cos(rads)
+        )
+    return df
+
+def apply_signal_filters(
+    df: pd.DataFrame, 
+    columns: List[str], 
+    method: Literal['savgol', 'butter', 'raw'] = 'savgol',
+    **kwargs
+) -> pd.DataFrame:
+    """Applies zero-phase digital filtering to specified columns."""
+    if method == 'raw':
+        return df
+        
+    df_filtered = df.copy()
     
-    def __init__(self, df: pd.DataFrame, dt_minutes: float = 5.0):
-        # We take the output of VesselDataLoader.load_and_clean() as the input here
-        self.df = df.copy()
-        self.dt = dt_minutes
-        self.epsilon = 1e-6
-        
-        # Define the continuous signals that are mathematically safe to filter
-        self.continuous_signals = ['AE_POWER(kW)', 'SHIP SPEED(knots)']
-
-    def extract_features_and_filter(self, 
-                                 filter_method: Literal['savgol', 'butterworth', 'raw'] = 'savgol',
-                                 window_size: int = 5,
-                                 dropna: bool = True,
-                                 **kwargs) -> pd.DataFrame:
-        """
-        Master method: Filters raw signals and derives all kinematic/electrical 
-        features in a single consistent pass.
-        """
-        # 1. Base Kinematics (Must happen before filtering if we filter trig headings)
-        self._derive_base_kinematics()
-        
-        # 2. Apply Filtering to Continuous Signals (including the newly derived trig headings)
-        signals_to_filter = self.continuous_signals + ['HEADING_SIN', 'HEADING_COS']
-        for col in signals_to_filter:
-            self.df[col] = self.apply_filter(col, filter_method, window_size=window_size, **kwargs)
-        
-        # 3. Derive Electrical Shock Proxies and Rate of Turn (Uses Filtered Data)
-        self._derive_derivatives_and_proxies()
-        
-        if dropna:
-            critical_cols = [
-                'AE_POWER(kW)', 'NUM_GENERATORS', 'ENERGY_INTENSITY', 
-                'MANEUVER_INTENSITY', 'POWER_TV_ENERGY', 'PF_DERIVATIVE'
-            ]
-            # Only drop based on the columns that actually exist to avoid KeyErrors
-            existing_cols = [c for c in critical_cols if c in self.df.columns]
-            self.df.dropna(subset=existing_cols, inplace=True)
+    for col in columns:
+        if col not in df_filtered.columns:
+            continue
             
-        return self.df
-
-    def apply_filter(self, column: str, method: str = 'savgol', **kwargs) -> pd.Series:
-        """
-        Applies zero-phase filtering.
-        method: 'savgol', 'butter', or 'raw'
-        kwargs: 
-            savgol -> window (int), polyorder (int)
-            butter -> order (int), cutoff (float, normalized 0 to 1)
-        """
-        if column not in self.df.columns or method == 'raw':
-            return self.df[column] if column in self.df.columns else pd.Series(np.nan, index=self.df.index)
-            
-        series = self.df[column]
+        series = df_filtered[col]
         mask = series.isna()
+        
+        # Temporarily interpolate NaNs for filter stability
         if mask.any():
             series = series.interpolate(method='linear')
             
@@ -72,53 +45,94 @@ class DataProcessor:
             
         elif method == 'butter':
             order = kwargs.get('order', 2)
-            cutoff = kwargs.get('cutoff', 0.1) # Normalized frequency
+            cutoff = kwargs.get('cutoff', 0.1)
             b, a = butter(order, cutoff, btype='low', analog=False)
-            smoothed = filtfilt(b, a, series) # Zero-phase filtering
+            smoothed = filtfilt(b, a, series)
             
-        else:
-            raise ValueError(f"Unknown filter method: {method}")
-
-        smoothed_series = pd.Series(smoothed, index=self.df.index)
+        # Restore NaNs to avoid hallucinating data
+        smoothed_series = pd.Series(smoothed, index=df.index)
         smoothed_series[mask] = np.nan
-        return smoothed_series
-
-    def _derive_base_kinematics(self) -> None:
-        """Calculates Trig encodings for HMM/Clustering before filtering."""
-        if 'HEADING(degree)' in self.df.columns:
-            rads = np.radians(self.df['HEADING(degree)'])
-            self.df['HEADING_SIN'] = np.sin(rads)
-            self.df['HEADING_COS'] = np.cos(rads)
-
-    def _derive_derivatives_and_proxies(self) -> None:
-        """Calculates derivatives (RoT, TV) and Electrical Shock Proxies on filtered data."""
-        # Rate of Turn
-        if 'HEADING(degree)' in self.df.columns:
-            raw_diff = self.df['HEADING(degree)'].diff()
-            self.df['ROT_DEG_PER_MIN'] = ((raw_diff + 180) % 360 - 180) / self.dt
-            self.df['MANEUVER_INTENSITY'] = self.df['ROT_DEG_PER_MIN'].abs() * self.df['AE_POWER(kW)']
-            self.df['LATERAL_ACCELERATION'] = self.df['ROT_DEG_PER_MIN'] * self.df['SHIP SPEED(knots)']
-
-        # Energy Intensity and TV Energy
-        if 'AE_POWER(kW)' in self.df.columns:
-            self.df['POWER_TV_ENERGY'] = (self.df['AE_POWER(kW)'].diff() / self.dt)**2
-            self.df['REL_POWER_VOLATILITY'] = self.df['POWER_TV_ENERGY'] / (self.df['AE_POWER(kW)']**2 + self.epsilon)
-            if 'SHIP SPEED(knots)' in self.df.columns:
-                self.df['ENERGY_INTENSITY'] = self.df['AE_POWER(kW)'] / (self.df['SHIP SPEED(knots)'] + self.epsilon)
-            
-
-        # Power Factor Logic
-        p_cols = ['GE162(kW)', 'GE262(kW)', 'GE362(kW)']
-        pf_cols = ['GE164', 'GE264', 'GE364']
+        df_filtered[col] = smoothed_series
         
-        if all(c in self.df.columns for c in p_cols + pf_cols) and 'AE_POWER(kW)' in self.df.columns:
-            s_total = sum(self.df[p_cols[i]] / (self.df[pf_cols[i]] + self.epsilon) for i in range(3))
-            self.df['PF_EFFECTIVE'] = (self.df['AE_POWER(kW)'] / (s_total + self.epsilon)).clip(0, 1)
-            self.df['PF_DERIVATIVE'] = self.df['PF_EFFECTIVE'].diff() / self.dt
-            self.df['VOLTAGE_STRESS'] = self.df['POWER_TV_ENERGY'] * (1 - self.df['PF_EFFECTIVE'])
-            
-        # Discrete Generator Logic (NEVER FILTERED)
-        if all(c in self.df.columns for c in p_cols):
+    return df_filtered
 
-            self.df['NUM_GENERATORS'] = (self.df[p_cols] > 5.0).sum(axis=1)
-            self.df['GEN_TRANSITION'] = self.df['NUM_GENERATORS'].diff().fillna(0)
+def calc_derivatives_and_proxies(df: pd.DataFrame, dt_min: float) -> pd.DataFrame:
+    """Calculates physical derivatives and electrical shock proxies."""
+    new_cols = {}
+    
+    # 1. Rate of Turn & Kinematics
+    if 'HEADING(degree)' in df.columns:
+        raw_diff = df['HEADING(degree)'].diff()
+        rot = ((raw_diff + 180) % 360 - 180) / dt_min
+        new_cols['ROT_DEG_PER_MIN'] = rot
+        
+        if 'AE_POWER(kW)' in df.columns:
+            new_cols['MANEUVER_INTENSITY'] = rot.abs() * df['AE_POWER(kW)']
+
+    # 2. Energy Intensity & Volatility
+    if 'AE_POWER(kW)' in df.columns:
+        tv_energy = (df['AE_POWER(kW)'].diff() / dt_min)**2
+        new_cols['POWER_TV_ENERGY'] = tv_energy
+        # Use PHYSICS.EPSILON from config
+        new_cols['REL_POWER_VOLATILITY'] = tv_energy / (df['AE_POWER(kW)']**2 + PHYSICS.EPSILON)
+
+        
+        if 'SHIP SPEED(knots)' in df.columns:
+            new_cols['ENERGY_INTENSITY'] = df['AE_POWER(kW)'] / (df['SHIP SPEED(knots)'] + PHYSICS.EPSILON)
+            
+    # 3. Power Factor Logic
+    p_cols = ['GE162(kW)', 'GE262(kW)', 'GE362(kW)']
+    pf_cols = ['GE164', 'GE264', 'GE364']
+    
+    if all(c in df.columns for c in p_cols + pf_cols) and 'AE_POWER(kW)' in df.columns:
+        s_total = sum(df[p_cols[i]] / (df[pf_cols[i]] + PHYSICS.EPSILON) for i in range(3))
+        pf_effective = (df['AE_POWER(kW)'] / (s_total + PHYSICS.EPSILON)).clip(0, 1)
+        
+        new_cols['PF_EFFECTIVE'] = pf_effective
+        new_cols['PF_DERIVATIVE'] = pf_effective.diff() / dt_min
+        
+        if 'POWER_TV_ENERGY' in new_cols:
+             new_cols['VOLTAGE_STRESS'] = new_cols['POWER_TV_ENERGY'] * (1 - pf_effective)
+             
+    # 4. Discrete Generator Logic
+    if all(c in df.columns for c in p_cols):
+        num_gens = (df[p_cols] > 5.0).sum(axis=1)
+        new_cols['NUM_GENERATORS'] = num_gens
+        new_cols['GEN_TRANSITION'] = num_gens.diff().fillna(0)
+
+    return df.assign(**new_cols)
+    
+def engineer_telemetry_features(
+    raw_df: pd.DataFrame, 
+    filter_method: Literal['savgol', 'butter', 'raw'] = 'savgol',
+    dropna: bool = True
+) -> pd.DataFrame:
+    """Master functional pipeline for telemetry engineering."""
+    
+    # 1. Dynamically calculate dt_min using the median time gap
+    if not isinstance(raw_df.index, pd.DatetimeIndex):
+        raise TypeError("DataFrame index must be a DatetimeIndex to compute dt.")
+        
+    median_dt_seconds = raw_df.index.to_series().diff().median().total_seconds()
+    dt_min = median_dt_seconds / 60.0
+
+    # 2. Retrieve appropriate filter kwargs from config
+    filter_kwargs = FILTERS.SAVGOL_DEFAULT if filter_method == 'savgol' else FILTERS.BUTTER_DEFAULT
+    cols_to_filter = ['AE_POWER(kW)', 'SHIP SPEED(knots)', 'HEADING_SIN', 'HEADING_COS']
+    
+    # 3. Execute the functional pipeline
+    processed_df = (
+        raw_df.copy()
+        .pipe(calc_trig_headings)
+        .pipe(apply_signal_filters, columns=cols_to_filter, method=filter_method, **filter_kwargs)
+        .pipe(calc_derivatives_and_proxies, dt_min=dt_min)
+    )
+    
+    if dropna:
+        critical_cols = [
+            'AE_POWER(kW)', 'NUM_GENERATORS', 'MANEUVER_INTENSITY', 'POWER_TV_ENERGY'
+        ]
+        existing_cols = [c for c in critical_cols if c in processed_df.columns]
+        processed_df = processed_df.dropna(subset=existing_cols)
+        
+    return processed_df

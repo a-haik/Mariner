@@ -9,6 +9,7 @@ math
 branca
 seaborn
 plotly
+rainflow
 
 # Advanced Modeling & Optimization
 jax
