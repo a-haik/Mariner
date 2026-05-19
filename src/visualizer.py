@@ -240,39 +240,35 @@ class VesselVisualizer:
 
         return vessel_map
     
-    def plot_brick_space(self, registry_df: pd.DataFrame, y_axis_metric: str = 'Intensive_L2_Volatility', include_loitering: bool = True) -> go.Figure:
+    def plot_brick_space(self, registry_df: pd.DataFrame, y_axis_metric: str = 'Intensive_L2_Volatility') -> go.Figure:
         """
-        Constructs an interactive Plotly scatter plot.
-        Args:
-            include_loitering: Strictly toggles between showing the raw physical voyages (True) 
-                               or the synthetically stitched, compressed voyages (False).
+        Constructs an interactive Plotly scatter plot for individual physical blocks.
         """
         if registry_df.empty:
             raise ValueError("Input registry dataframe is completely empty.")
             
-        # 1. Enforce Mutual Exclusivity
         plot_df = registry_df.copy()
-        if include_loitering:
-            # Show the true trips: Drop the synthetic stitched trips
-            plot_df = plot_df[plot_df['Loitering_Handling'] != 'Without_Loitering']
-        else:
-            # Show the compressed trips: Drop the original trips that contain loitering
-            plot_df = plot_df[plot_df['Loitering_Handling'] != 'With_Loitering']
-            
         fig = go.Figure()
+        
+        # Calculate consistent sizing reference based on the maximum duration
+        max_duration = plot_df['Duration_h'].max()
+        sizeref_val = 2. * max_duration / (40.**2) # Bounds max bubble size to ~40px
+        
         unique_phases = plot_df['PHASE'].unique()
         
+        # 1. Plot the True Data Points
         for phase in unique_phases:
             phase_df = plot_df[plot_df['PHASE'] == phase]
             color = self.status_colors.get(phase, '#000000')
             
-            x_vals = (phase_df['H2_Rate_Lower_kg_h'] + phase_df['H2_Rate_Upper_kg_h']) / 2
-            err_plus = phase_df['H2_Rate_Upper_kg_h'] - phase_df['H2_Rate_Lower_kg_h']
+            # Calculate midpoint and symmetric error
+            x_mid = (phase_df['H2_Rate_Lower_kg_h'] + phase_df['H2_Rate_Upper_kg_h']) / 2.0
+            err_val = phase_df['H2_Rate_Upper_kg_h'] - x_mid
             
             hover_text = []
             for _, row in phase_df.iterrows():
                 is_transit = row['PHASE'] in ['Sea_Transit_Laden', 'Sea_Transit_Ballast']
-                handling_info = f"Loitering Handling: {row['Loitering_Handling']}<br>" if is_transit else ""
+                handling_info = f"Loitering Handling: {row.get('Loitering_Handling', 'N/A')}<br>" if is_transit else ""
                 
                 hover_str = (
                     f"<b>Phase Block: {row['PHASE']}</b><br>"
@@ -282,53 +278,159 @@ class VesselVisualizer:
                     f"Total Duration: {row['Duration_h']:.2f} h<br>"
                     f"Mean Power Demand: {row['Mean_Power_kW']:.1f} kW<br>"
                     f"-----------------------------------<br>"
-                    f"H2 Consumption Rate: [{row['H2_Rate_Lower_kg_h']:.2f} - {row['H2_Rate_Upper_kg_h']:.2f}] kg/h<br>"
-                    f"Total H2 Consumption: [{row['H2_Cons_Lower_kg']:.1f} - {row['H2_Cons_Upper_kg']:.1f}] kg<br>"
-                    f"-----------------------------------<br>"
-                    f"Intensive L1 Power Index (kW): {row.get('Intensive_L1_Power', 0.0):.2f}<br>"
-                    f"Intensive L2 Volatility Index (kW^2/h): {row.get('Intensive_L2_Volatility', 0.0):.2f}"
+                    f"H2 Rate: [{row['H2_Rate_Lower_kg_h']:.2f} - {row['H2_Rate_Upper_kg_h']:.2f}] kg/h<br>"
+                    f"L2 Volatility: {row.get('Intensive_L2_Volatility', 0.0):.2f}"
                 )
                 hover_text.append(hover_str)
 
             fig.add_trace(go.Scatter(
-                x=x_vals,
+                x=x_mid,
                 y=phase_df[y_axis_metric],
-                mode='markers',
+                mode='markers', # Strict markers, no text labels
                 name=phase,
                 text=hover_text,
                 hoverinfo='text',
+                legendgroup="Phases",
+                legendgrouptitle_text="Operational Regimes",
                 marker=dict(
                     size=phase_df['Duration_h'],
                     sizemode='area',
-                    sizeref=2. * max(plot_df['Duration_h']) / (40.**2),
-                    sizemin=6,
+                    sizeref=sizeref_val,
+                    sizemin=4,
                     color=color,
-                    symbol='circle',
                     line=dict(width=1, color='DarkSlateGrey')
                 ),
                 error_x=dict(
                     type='data',
                     symmetric=True,
-                    array=err_plus,
-                    arrayminus=np.zeros(len(phase_df)),
+                    array=err_val,
                     color='rgba(120,120,120,0.35)',
                     thickness=1.5,
                     width=4
                 )
             ))
             
+        # 2. Inject Dummy Traces for the Size Legend
+        legend_sizes_h = [
+            max(1.0, round(plot_df['Duration_h'].quantile(0.1))), 
+            round(plot_df['Duration_h'].median()), 
+            round(max_duration)
+        ]
+        
+        for s in legend_sizes_h:
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                name=f"{s} hours",
+                legendgroup="Size",
+                legendgrouptitle_text="Block Duration",
+                marker=dict(
+                    size=[s],
+                    sizemode='area',
+                    sizeref=sizeref_val,
+                    color='rgba(150,150,150,0.5)',
+                    line=dict(width=1, color='DarkSlateGrey')
+                )
+            ))
+            
         fig.update_layout(
             title=dict(
-                text=f"MARINER Technical Brick Workspace Axis Profile ({y_axis_metric}) | Loitering: {include_loitering}",
+                text=f"MARINER Technical Brick Workspace Axis Profile ({y_axis_metric})",
                 font=dict(size=14, family="Arial", color="black")
             ),
-            xaxis_title="Hydrogen Consumption Flow Rate (kg/h) [Error Bars: η=0.55 Baseline → η=0.45 Limit]",
+            xaxis_title="Hydrogen Consumption Flow Rate (kg/h) [Error Bars: η=0.55 → η=0.45]",
             yaxis_title=f"PEMFC Degradation Index Target: {y_axis_metric}",
             template="plotly_white",
             hovermode='closest',
             width=1100,
-            height=650,
-            legend_title_text="Operational Regimes"
+            height=650
+        )
+        
+        return fig
+
+
+    def plot_phase_statistics(self, stats_df: pd.DataFrame) -> go.Figure:
+        """
+        Plots aggregated expected values for global operational states.
+        Bubble size represents the fractional time spent in that state.
+        """
+        if stats_df.empty:
+            raise ValueError("Statistics DataFrame is empty.")
+            
+        total_time = stats_df['Total_Logged_Hours'].sum()
+        fig = go.Figure()
+
+        sizeref_val = 2. * max(stats_df['Total_Logged_Hours'] / total_time) / (50.**2)
+
+        for phase, row in stats_df.iterrows():
+            if phase == 'Unknown': 
+                continue
+                
+            color = self.status_colors.get(phase, '#333333')
+            time_fraction = row['Total_Logged_Hours'] / total_time
+            
+            h2_lower = row['Mean_H2_Rate_Lower_kg_h']
+            h2_upper = row['Mean_H2_Rate_Upper_kg_h']
+            h2_mid = (h2_lower + h2_upper) / 2.0
+            err_val = h2_upper - h2_mid
+
+            hover_text = (
+                f"<b>{phase}</b><br>"
+                f"Time Fraction: {time_fraction*100:.1f}% ({row['Total_Logged_Hours']:.1f} hrs)<br>"
+                f"Mean Power: {row['Mean_Power_kW']:.1f} kW<br>"
+                f"H2 Rate: [{h2_lower:.2f} - {h2_upper:.2f}] kg/h<br>"
+                f"L2 Volatility: {row['Mean_L2_Volatility']:.2f}"
+            )
+
+            fig.add_trace(go.Scatter(
+                x=[h2_mid],
+                y=[row['Mean_L2_Volatility']],
+                mode='markers', # Stripped text labels to maintain clean layout
+                name=phase,
+                hoverinfo='text',
+                hovertext=[hover_text],
+                legendgroup="Phases",
+                legendgrouptitle_text="Aggregated Regimes",
+                marker=dict(
+                    size=[time_fraction],
+                    sizemode='area',
+                    sizeref=sizeref_val,
+                    sizemin=10,
+                    color=color,
+                    line=dict(width=1.5, color='DarkSlateGrey')
+                ),
+                error_x=dict(
+                    type='data', array=[err_val], arrayminus=[err_val],
+                    color='rgba(100,100,100,0.5)', thickness=2, width=5
+                )
+            ))
+
+        # Dummy Traces for Time Fraction Size Legend
+        legend_fractions = [0.1, 0.5, 1.0] # 10%, 50%, 100%
+        for f in legend_fractions:
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                name=f"{int(f*100)}% of Total Time",
+                legendgroup="Size",
+                legendgrouptitle_text="Time Fraction",
+                marker=dict(
+                    size=[f],
+                    sizemode='area',
+                    sizeref=sizeref_val,
+                    color='rgba(150,150,150,0.5)',
+                    line=dict(width=1, color='DarkSlateGrey')
+                )
+            ))
+
+        fig.update_layout(
+            title="Global Phase Statistics: Expected H2 Flow vs L2 Volatility",
+            xaxis_title="Expected Hydrogen Flow Rate (kg/h) [Error Bars: η=0.55 → η=0.45]",
+            yaxis_title="Expected Intensive L2 Volatility (kW²/h)",
+            template="plotly_white",
+            hovermode='closest',
+            width=1100,
+            height=650
         )
         
         return fig
