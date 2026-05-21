@@ -22,7 +22,7 @@ class FilterPresets:
     def __post_init__(self):
         # Using object.__setattr__ because the dataclass is frozen
         object.__setattr__(self, 'SAVGOL_DEFAULT', {'window': 10, 'polyorder': 2})
-        object.__setattr__(self, 'BUTTER_DEFAULT', {'order': 2, 'cutoff': 0.1})
+        object.__setattr__(self, 'BUTTER_DEFAULT', {'order': 2, 'cutoff': 0.05})
 
 @dataclass(frozen=True)
 class ColorPalette:

@@ -120,25 +120,38 @@ class MissionProfiler:
                     
         return pd.DataFrame(registry_entries)
 
-    def extract_global_statistics(self, df: pd.DataFrame) -> pd.DataFrame:
-        valid_df = df[df['MODE'] != 'Unknown'].copy()
-        valid_df['H2_Rate_Lower_kg_h'] = valid_df['AE_POWER(kW)'] / (PHYSICS.ETA_UPPER * PHYSICS.LHV_H2_KWH_KG)
-        valid_df['H2_Rate_Upper_kg_h'] = valid_df['AE_POWER(kW)'] / (PHYSICS.ETA_LOWER * PHYSICS.LHV_H2_KWH_KG)
+    def extract_global_statistics(self, registry_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Aggregates global stats directly from the block registry using duration-weighted means.
+        This guarantees mathematical consistency (Conservation of Energy) between the bricks and global metrics.
+        """
+        if registry_df.empty:
+            return pd.DataFrame()
+        
+        total_registry_duration = registry_df['Duration_h'].sum()
+            
+        stats = []
+        for mode, group in registry_df.groupby('MODE'):
+            total_hours = group['Duration_h'].sum()
+            if total_hours == 0:
+                continue
+                
+            def weighted_mean(col):
+                return (group[col] * group['Duration_h']).sum() / total_hours
 
-        stats = valid_df.groupby('MODE').agg(
-            Mean_Power_kW=('AE_POWER(kW)', 'mean'),
-            Mean_H2_Rate_Lower_kg_h=('H2_Rate_Lower_kg_h', 'mean'),
-            Mean_H2_Rate_Upper_kg_h=('H2_Rate_Upper_kg_h', 'mean'),
-            Mean_Power_Fluctuation_Intensity=('POWER_TV_ENERGY', 'mean'),
-            Sample_Count=('AE_POWER(kW)', 'count')
-        )
-
-        def calculate_mode_fatigue(group):
-            return self._compute_normalized_rainflow(group['AE_POWER(kW)'], len(group) * self.dt_hours)
-
-        stats['Relative_Fatigue_Activity_Rate'] = valid_df.groupby('MODE').apply(calculate_mode_fatigue, include_groups=False)
-        stats['Total_Logged_Hours'] = stats['Sample_Count'] * self.dt_hours
-        return stats.fillna(0)
+            stats.append({
+                'MODE': mode,
+                'Mean_Power_kW': weighted_mean('Mean_Power_kW'),
+                'Mean_H2_Rate_Lower_kg_h': weighted_mean('H2_Rate_Lower_kg_h'),
+                'Mean_H2_Rate_Upper_kg_h': weighted_mean('H2_Rate_Upper_kg_h'),
+                'Mean_Power_Fluctuation_Intensity': weighted_mean('Mean_Power_Fluctuation_Intensity'),
+                'Relative_Fatigue_Activity_Rate': weighted_mean('Relative_Fatigue_Activity_Rate'),
+                'Number_of_Blocks': len(group),
+                'Total_Logged_Hours': total_hours,
+                'Time_Fraction': total_hours / total_registry_duration if total_registry_duration > 0 else 0
+            })
+            
+        return pd.DataFrame(stats).set_index('MODE')
 
 
 class ScenarioEvaluator:
@@ -146,20 +159,32 @@ class ScenarioEvaluator:
     def __init__(self, global_stats: pd.DataFrame):
         self.stats = global_stats
 
-    def evaluate(self, time_weights_hours: Dict[str, float]) -> dict:
+    def _print_report(self, results: dict):
+        """Helper for a clean console summary."""
+        print("\n" + "="*45)
+        print("SCENARIO EVALUATION REPORT")
+        print("="*45)
+        print(f"Total Duration    : {results['Scenario_Hours']:.1f} h")
+        print(f"Energy Demanded   : {results['Expected_Energy_kWh']:.1f} kWh")
+        print("-" * 45)
+        print(f"H2 Consumption    : [{results['Expected_Total_H2_Lower_kg']:.2f} - "
+              f"{results['Expected_Total_H2_Upper_kg']:.2f}] kg")
+        print(f"Fatigue Index     : {results['Expected_Total_Fatigue']:.4f} units")
+        print(f"Fluctuation Index : {results['Expected_Total_Fluctuation']:.2f} kW²/s²")
+        print("="*45 + "\n")
+
+    def evaluate(self, time_weights_hours: Dict[str, float], print_results: bool = False) -> dict:
         w = pd.Series(time_weights_hours).reindex(self.stats.index).fillna(0.0)
         
         expected_h2_lower = np.dot(w, self.stats['Mean_H2_Rate_Lower_kg_h'])
         expected_h2_upper = np.dot(w, self.stats['Mean_H2_Rate_Upper_kg_h'])
         expected_energy = np.dot(w, self.stats['Mean_Power_kW'])
-        expected_total_fatigue = np.dot(w, self.stats['Fatigue_Damage_Rate'])
+        
+        # Total fatigue over scenario = sum(Rate_i * Time_i)
+        expected_total_fatigue = np.dot(w, self.stats['Relative_Fatigue_Activity_Rate'])
         expected_total_fluctuation = np.dot(w, self.stats['Mean_Power_Fluctuation_Intensity'])
         
-        # Linearly combine the intensive fatigue rates
-        # Total fatigue over scenario = sum(Rate_i * Time_i)
-        expected_total_fatigue = np.dot(w, self.stats['Fatigue_Damage_Rate'])
-        
-        return {
+        results = {
             'Scenario_Hours': w.sum(),
             'Expected_Energy_kWh': expected_energy,
             'Expected_Total_H2_Lower_kg': expected_h2_lower,
@@ -168,3 +193,8 @@ class ScenarioEvaluator:
             'Expected_Total_Fluctuation': expected_total_fluctuation,
             'Weights_Applied': w.to_dict()
         }
+        
+        if print_results:
+            self._print_report(results)
+            
+        return results

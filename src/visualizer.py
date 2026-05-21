@@ -187,7 +187,7 @@ def plot_trajectory_folium(df: pd.DataFrame, status_col: str = 'STATUS', arrow_s
 # Aggregated (Blocks & Modes) Visualizations
 # ---------------------------------------------------------
 
-def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate') -> go.Figure:
+def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate', print_table: bool = False) -> go.Figure:
     """Constructs a scatter plot for individual physical blocks across datasets."""
     if registry_df.empty:
         raise ValueError("Input registry dataframe is completely empty.")
@@ -195,6 +195,15 @@ def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_F
     fig = go.Figure()
     max_duration = registry_df['Duration_h'].max()
     sizeref_val = 2. * max_duration / (40.**2) 
+
+    if print_table:
+        print("\n--- Physical Block Registry Summary ---")
+        # Define relevant columns to display
+        cols = ['MODE', 'Duration_h', 'Mean_Power_kW', 'H2_Rate_Lower_kg_h', 'H2_Rate_Upper_kg_h', y_axis_metric]
+        # Filter to only existing columns to prevent errors
+        display_df = registry_df[[c for c in cols if c in registry_df.columns]].copy()
+        print(display_df.to_string())
+        print("-" * 50 + "\n")
     
     for mode in registry_df['MODE'].unique():
         mode_df = registry_df[registry_df['MODE'] == mode]
@@ -244,10 +253,22 @@ def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_F
     )
     return fig
 
-def plot_mode_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate') -> go.Figure:
+def plot_mode_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate', print_table: bool = False) -> go.Figure:
     """Plots aggregated expected values for global operational states."""
     if stats_df.empty:
         raise ValueError("Statistics DataFrame is empty.")
+    
+    # --- New: Print Results Option ---
+    if print_table:
+        print("\n--- Operational State Statistics Summary ---")
+        # Display key columns; feel free to add/remove columns as needed
+        display_df = stats_df.copy()
+        # Ensure the index (the mode name) is a column for clear printing
+        if 'Mode' not in display_df.columns:
+            display_df = display_df.reset_index().rename(columns={'index': 'Mode'})
+        
+        print(display_df.to_string(index=False))
+        print("-" * 50 + "\n")
         
     total_time = stats_df['Total_Logged_Hours'].sum()
     fig = go.Figure()
