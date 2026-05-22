@@ -38,6 +38,8 @@ Predicting hydrogen mass requirements is bounded by the thermodynamic efficiency
 $$\dot{m}_{H_2}(t) = \frac{P_{FC}(t)}{\eta \cdot LHV_{H_2}}$$
 Given the Lower Heating Value ($LHV_{H_2} = 33.32 \text{ kWh/kg}$), the pipeline computes all final scenario metrics deterministically across an uncertainty envelope spanning from an optimal beginning-of-life state ($\eta_{upper} = 0.55$) to a degraded end-of-life state ($\eta_{lower} = 0.45$).
 
+---
+
 ## 3. Architecture & Data Pipeline
 
 The repository is structured as a functional, unidirectional data pipeline. It decouples raw I/O, signal processing, and mathematical aggregation to ensure reproducibility across different vessel datasets.
@@ -87,9 +89,37 @@ The pipeline enforces several immutable physical boundaries derived directly fro
 * **Battery Sizing Buffer:** Peak usable battery capacity excursions are divided by a **0.60** factor to respect a 60% Depth of Discharge (DoD) hardware limitation, providing realistic installed pack estimates.
 
 ---
-## 6. Author & Acknowledgments
 
-**Author:** Adam Haïk - Dual-Degree Engineering & Physics Student (Mines Paris / ENS)  
-**Institution:** NORCE Norwegian Research Centre AS  
+## 6. Setup & Installation
 
-*Note: The documentation, architectural refactoring, and initial codebase scaffolding in this repository were co-authored with the assistance of an AI engineering co-pilot.*
+### Prerequisites
+* **Python:** Version 3.12 or higher.
+* **Environment:** A virtual environment (`venv`) is strongly recommended to isolate dependencies.
+
+### Installation
+1. Clone the repository and navigate to the project root:
+   ```bash
+   git clone <repository_url>
+   cd mariner-wp9
+2. Initialize and activate the virtual environment:
+   ```bash
+    python3.12 -m venv .venv
+    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+3. Install the core dependencies from the manifest:
+   ```bash
+   pip install --upgrade pip
+   pip install -r requirements.txt
+### Executing the Pipeline
+Ensure your raw vessel telemetry CSVs (e.g., Wembley_voy_236.csv) are placed in the data/raw/ directory. (Note: These files are ignored by git to protect end-user data).
+
+Launch the interactive Jupyter Notebook to execute the primary testing workflow:
+```bash
+jupyter notebook notebooks/test.ipynb 
+```
+
+## 7. Author & Acknowledgments
+Author: Adam Haïk - Dual-Degree Engineering & Physics Student (Mines Paris / ENS)
+
+Institution: NORCE Norwegian Research Centre AS
+
+Note: The documentation, architectural refactoring, and initial codebase scaffolding in this repository were co-authored with the assistance of an AI engineering co-pilot.
