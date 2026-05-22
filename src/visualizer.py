@@ -196,14 +196,7 @@ def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_F
     max_duration = registry_df['Duration_h'].max()
     sizeref_val = 2. * max_duration / (40.**2) 
 
-    if print_table:
-        print("\n--- Physical Block Registry Summary ---")
-        # Define relevant columns to display
-        cols = ['MODE', 'Duration_h', 'Mean_Power_kW', 'H2_Rate_Lower_kg_h', 'H2_Rate_Upper_kg_h', y_axis_metric]
-        # Filter to only existing columns to prevent errors
-        display_df = registry_df[[c for c in cols if c in registry_df.columns]].copy()
-        print(display_df.to_string())
-        print("-" * 50 + "\n")
+    
     
     for mode in registry_df['MODE'].unique():
         mode_df = registry_df[registry_df['MODE'] == mode]
@@ -311,4 +304,77 @@ def plot_mode_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Relative_
         yaxis_title=f"PEMFC Degradation Index: {y_axis_metric}",
         template="plotly_white", hovermode='closest', width=1100, height=650
     )
+    return fig
+
+def plot_scenario_tradeoff_space(compiled_results: dict) -> go.Figure:
+    """
+    Plots all 1000h scenarios on a single canvas mapping Degradation Index vs H2 Mass Use.
+    Uses horizontal error bars to elegant capture the fuel cell efficiency uncertainty span.
+    """
+    fig = go.Figure()
+    
+    # Pre-instantiate a distinct color map for scannability
+    color_map = {
+        'Baseline': '#55A868',
+        'Shore_Power': '#2653CC',
+        'PEMFC_Off_Port': '#D65F5F',
+        'Long_Trips': '#DD8452'
+    }
+    
+    for scenario_name, data in compiled_results.items():
+        color = color_map.get(scenario_name, '#333333')
+        
+        # --- 1. Plot the Standard Variant Pair Component ---
+        std = data['Standard']
+        x_mid_std = (std['H2_Consumed_Lower_kg'] + std['H2_Consumed_Upper_kg']) / 2.0
+        err_std = std['H2_Consumed_Upper_kg'] - x_mid_std
+        
+        fig.add_trace(go.Scatter(
+            x=[x_mid_std],
+            y=[std['Accumulated_Fatigue']],
+            mode='markers+text',
+            name=f"{scenario_name} (Standard)",
+            text=[scenario_name],
+            textposition="top center",
+            marker=dict(size=14, color=color, symbol='circle', line=dict(width=1.5, color='black')),
+            error_x=dict(type='data', array=[err_std], color='rgba(80,80,80,0.4)', thickness=2, width=6),
+            hoverinfo='text',
+            hovertext=(
+                f"<b>Scenario: {scenario_name} (Standard)</b><br>"
+                f"Fatigue Index: {std['Accumulated_Fatigue']:.4f}<br>"
+                f"H2 Mass Range: [{std['H2_Consumed_Lower_kg']:.1f} - {std['H2_Consumed_Upper_kg']:.1f}] kg<br>"
+                f"Energy Output: {std['Expected_Energy_kWh']:.1f} kWh"
+            )
+        ))
+        
+        # --- 2. Plot the Low-Cost Variant Pair Component ---
+        lc = data['LowCost']
+        x_mid_lc = (lc['H2_Consumed_Lower_kg'] + lc['H2_Consumed_Upper_kg']) / 2.0
+        err_lc = lc['H2_Consumed_Upper_kg'] - x_mid_lc
+        
+        fig.add_trace(go.Scatter(
+            x=[x_mid_lc],
+            y=[lc['Accumulated_Fatigue']],
+            mode='markers',
+            name=f"{scenario_name} (Low-Cost Bottom 25%)",
+            marker=dict(size=12, color=color, symbol='diamond', line=dict(width=1.5, color='black')),
+            error_x=dict(type='data', array=[err_lc], color='rgba(120,120,120,0.3)', thickness=1.5, width=4),
+            hoverinfo='text',
+            hovertext=(
+                f"<b>Scenario: {scenario_name} (Low-Cost Profile)</b><br>"
+                f"Fatigue Index: {lc['Accumulated_Fatigue']:.4f}<br>"
+                f"H2 Mass Range: [{lc['H2_Consumed_Lower_kg']:.1f} - {lc['H2_Consumed_Upper_kg']:.1f}] kg"
+            )
+        ))
+        
+    fig.update_layout(
+        title="MARINER Scenario Tradeoff Optimization Workspace",
+        xaxis_title="Expected Total H2 Consumption Over 1000 Hours (kg) [Uncertainty Span η ∈ [0.45, 0.55]]",
+        yaxis_title="Qualitative PEMFC Degradation Index (Rainflow Fatigue Accumulation)",
+        template="plotly_white",
+        width=1100,
+        height=700,
+        hovermode="closest"
+    )
+    
     return fig

@@ -2,7 +2,7 @@
 import pandas as pd
 import numpy as np
 import rainflow
-from typing import Dict
+from typing import Dict, Any
 from src.config import PHYSICS
 
 class MissionProfiler:
@@ -154,47 +154,144 @@ class MissionProfiler:
         return pd.DataFrame(stats).set_index('MODE')
 
 
-class ScenarioEvaluator:
-    """Linear Engine for continuous 1000h scenarios."""
-    def __init__(self, global_stats: pd.DataFrame):
+class ScenarioManager:
+    """
+    Unified evaluation engine for MARINER 1000-hour testing scenarios.
+    Handles data-driven weight generation, low-cost statistical extraction,
+    and runs the master execution pipeline to compile results for reporting.
+    """
+    
+    def __init__(self, registry_df: pd.DataFrame, global_stats: pd.DataFrame):
+        self.registry = registry_df
         self.stats = global_stats
+        self.total_hours = registry_df['Duration_h'].sum() if not registry_df.empty else 0.0
+        
+        # Derive empirical baseline fractions from the master registry
+        self.base_fractions = {}
+        if not registry_df.empty:
+            for mode, group in registry_df.groupby('MODE'):
+                self.base_fractions[mode] = group['Duration_h'].sum() / self.total_hours
 
-    def _print_report(self, results: dict):
-        """Helper for a clean console summary."""
-        print("\n" + "="*45)
-        print("SCENARIO EVALUATION REPORT")
-        print("="*45)
-        print(f"Total Duration    : {results['Scenario_Hours']:.1f} h")
-        print(f"Energy Demanded   : {results['Expected_Energy_kWh']:.1f} kWh")
-        print("-" * 45)
-        print(f"H2 Consumption    : [{results['Expected_Total_H2_Lower_kg']:.2f} - "
-              f"{results['Expected_Total_H2_Upper_kg']:.2f}] kg")
-        print(f"Fatigue Index     : {results['Expected_Total_Fatigue']:.4f} units")
-        print(f"Fluctuation Index : {results['Expected_Total_Fluctuation']:.2f} kW²/s²")
-        print("="*45 + "\n")
-
-    def evaluate(self, time_weights_hours: Dict[str, float], print_results: bool = False) -> dict:
-        w = pd.Series(time_weights_hours).reindex(self.stats.index).fillna(0.0)
-        
-        expected_h2_lower = np.dot(w, self.stats['Mean_H2_Rate_Lower_kg_h'])
-        expected_h2_upper = np.dot(w, self.stats['Mean_H2_Rate_Upper_kg_h'])
-        expected_energy = np.dot(w, self.stats['Mean_Power_kW'])
-        
-        # Total fatigue over scenario = sum(Rate_i * Time_i)
-        expected_total_fatigue = np.dot(w, self.stats['Relative_Fatigue_Activity_Rate'])
-        expected_total_fluctuation = np.dot(w, self.stats['Mean_Power_Fluctuation_Intensity'])
-        
-        results = {
-            'Scenario_Hours': w.sum(),
-            'Expected_Energy_kWh': expected_energy,
-            'Expected_Total_H2_Lower_kg': expected_h2_lower,
-            'Expected_Total_H2_Upper_kg': expected_h2_upper,
-            'Expected_Total_Fatigue': expected_total_fatigue,
-            'Expected_Total_Fluctuation': expected_total_fluctuation,
-            'Weights_Applied': w.to_dict()
-        }
-        
-        if print_results:
-            self._print_report(results)
+    def _extract_low_cost_stats(self) -> pd.DataFrame:
+        """Filters the baseline registry to compute stats from the 25% lowest H2 cases per mode."""
+        low_cost_blocks = []
+        for mode, group in self.registry.groupby('MODE'):
+            # Select the bottom 25% of cases based on lower-bound H2 flow rate
+            n_select = max(1, int(len(group) * 0.25))
+            sorted_group = group.sort_values(by='H2_Rate_Lower_kg_h')
+            low_cost_blocks.append(sorted_group.head(n_select))
             
-        return results
+        low_cost_registry = pd.concat(low_cost_blocks, ignore_index=True)
+        
+        # Aggregate duration-weighted statistics for the low-cost registry subset
+        stats_list = []
+        for mode, group in low_cost_registry.groupby('MODE'):
+            t_hours = group['Duration_h'].sum()
+            def weighted_mean(col):
+                return (group[col] * group['Duration_h']).sum() / t_hours
+            stats_list.append({
+                'MODE': mode,
+                'Mean_Power_kW': weighted_mean('Mean_Power_kW'),
+                'Mean_H2_Rate_Lower_kg_h': weighted_mean('H2_Rate_Lower_kg_h'),
+                'Mean_H2_Rate_Upper_kg_h': weighted_mean('H2_Rate_Upper_kg_h'),
+                'Relative_Fatigue_Activity_Rate': weighted_mean('Relative_Fatigue_Activity_Rate'),
+                'Mean_Power_Fluctuation_Intensity': weighted_mean('Mean_Power_Fluctuation_Intensity')
+            })
+        return pd.DataFrame(stats_list).set_index('MODE')
+
+    def _generate_scenarios_weights(self, total_target_h: float) -> Dict[str, Dict[str, float]]:
+        """Generates target hourly distributions for the defined MARINER profiles."""
+        scenarios = {}
+        port_heavy_modes = ['Port_Loading', 'Port_Unloading']
+
+        # 1. Baseline
+        scenarios['Baseline'] = {m: f * total_target_h for m, f in self.base_fractions.items()}
+
+        # 2. Shore Power: Replace loading/unloading with Port Idle hotel loads
+        sp_fracs = self.base_fractions.copy()
+        heavy_time = sum(sp_fracs.pop(m, 0.0) for m in port_heavy_modes)
+        sp_fracs['Port_Idle'] = sp_fracs.get('Port_Idle', 0.0) + heavy_time
+        scenarios['Shore_Power'] = {m: f * total_target_h for m, f in sp_fracs.items()}
+
+        # 3. PEMFC Off Port: Drop port operations without replacement, re-normalize remaining times
+        fc_off = {m: f for m, f in self.base_fractions.items() if m not in port_heavy_modes}
+        norm = sum(fc_off.values())
+        scenarios['PEMFC_Off_Port'] = {m: (f / norm) * total_target_h for m, f in fc_off.items()}
+
+        # 4. Data-Driven Long Trips: Derived from empirical transit length distributions
+        transit_blocks = self.registry[self.registry['MODE'].str.contains('Transit', na=False)]
+        if transit_blocks.empty:
+            scenarios['Long_Trips'] = scenarios['Baseline']
+        else:
+            median_transit_length = transit_blocks['Duration_h'].median()
+            lt_fracs = {}
+            for mode, group in self.registry.groupby('MODE'):
+                if 'Transit' in mode:
+                    long_contribution = group[group['Duration_h'] >= median_transit_length]['Duration_h'].sum()
+                    lt_fracs[mode] = max(long_contribution, PHYSICS.EPSILON)
+                else:
+                    lt_fracs[mode] = group['Duration_h'].sum() * 0.5  # Reduce port transit frequencies
+            
+            norm_lt = sum(lt_fracs.values())
+            scenarios['Long_Trips'] = {m: (f / norm_lt) * total_target_h for m, f in lt_fracs.items()}
+
+        return scenarios
+
+    def _evaluate_single_matrix(self, weights: Dict[str, float], stats_matrix: pd.DataFrame) -> Dict[str, float]:
+        """Calculates the linear combination of weighted operational metrics."""
+        w_series = pd.Series(weights).reindex(stats_matrix.index).fillna(0.0)
+        return {
+            'Expected_Energy_kWh': float(np.dot(w_series, stats_matrix['Mean_Power_kW'])),
+            'H2_Consumed_Lower_kg': float(np.dot(w_series, stats_matrix['Mean_H2_Rate_Lower_kg_h'])),
+            'H2_Consumed_Upper_kg': float(np.dot(w_series, stats_matrix['Mean_H2_Rate_Upper_kg_h'])),
+            'Accumulated_Fatigue': float(np.dot(w_series, stats_matrix['Relative_Fatigue_Activity_Rate'])),
+            'Accumulated_Fluctuation': float(np.dot(w_series, stats_matrix['Mean_Power_Fluctuation_Intensity']))
+        }
+    
+    def _generate_scenario_summary_table(self, compiled_results: dict) -> pd.DataFrame:
+        """
+        Transforms the compiled scenarios output dictionary into a clean, 
+        structured pandas DataFrame for engineering report formatting.
+        """
+        records = []
+        
+        for scenario_name, variants in compiled_results.items():
+            for variant_type in ['Standard', 'LowCost']:
+                metrics = variants[variant_type]
+                records.append({
+                    'Scenario Profile': scenario_name,
+                    'Data Strategy': 'Full Run Average' if variant_type == 'Standard' else 'Bottom 25% Optimized',
+                    'Energy Demanded (kWh)': round(metrics['Expected_Energy_kWh'], 1),
+                    'H2 Mass Min [η=0.55] (kg)': round(metrics['H2_Consumed_Lower_kg'], 1),
+                    'H2 Mass Max [η=0.45] (kg)': round(metrics['H2_Consumed_Upper_kg'], 1),
+                    'Fatigue Index': round(metrics['Accumulated_Fatigue'], 5),
+                    'Power Fluctuation Intensity': round(metrics['Accumulated_Fluctuation'], 2)
+                })
+            
+        df_summary = pd.DataFrame(records)
+        return df_summary
+
+    def run_full_scenario_pipeline(self, total_target_h: float = 1000.0, print_summary: bool = False) -> Dict[str, Dict[str, Any]]:
+        """
+        Master execution pipeline. Generates weights, runs evaluations for both 
+        Standard and Low-Cost data distributions, and compiles the nested output.
+        """
+        # 1. Compute low-cost statistics matrix up front
+        low_cost_stats = self._extract_low_cost_stats()
+        
+        # 2. Generate weights for all targets
+        scenarios_weights = self._generate_scenarios_weights(total_target_h)
+        
+        compiled_results = {}
+        
+        # 3. Loop through configurations and evaluate both statistical layers
+        for scenario_name, weights in scenarios_weights.items():
+            compiled_results[scenario_name] = {
+                'Standard': self._evaluate_single_matrix(weights, self.stats),
+                'LowCost': self._evaluate_single_matrix(weights, low_cost_stats),
+                'Time_Weights_Hours': weights
+            }
+
+        if print_summary:
+            print(self._generate_scenario_summary_table(compiled_results))     
+        return compiled_results
