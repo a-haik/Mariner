@@ -11,7 +11,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from folium import plugins
 
-from src.config import COLOR, PHYSICS
+from scorpio.src.config import COLOR, PHYSICS
 
 # ---------------------------------------------------------
 # Utility Functions

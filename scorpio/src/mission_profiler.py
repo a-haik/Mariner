@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import rainflow
 from typing import Dict, Any
-from src.config import PHYSICS
+from scorpio.src.config import PHYSICS
 
 class MissionProfiler:
     """Handles deterministic modes classification and profile blocks generation."""

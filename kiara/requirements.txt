@@ -4,13 +4,10 @@
 numpy
 pandas
 scipy
-rainflow
+
 
 # Visualization & Mapping
 matplotlib
-plotly
-folium
-branca
 
 # Interactive Environment (Jupyter)
 ipykernel
