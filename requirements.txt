@@ -1,26 +1,17 @@
-# Data Processing
+# MARINER WP9 - Core Dependencies
+
+# Data Processing & Analytics
 numpy
 pandas
 scipy
-matplotlib
-typing
-pathlib
-math
-branca
-seaborn
-plotly
 rainflow
 
-# Advanced Modeling & Optimization
-jax
-jaxlib
-casadi
-numba
-sklearn
-numpyro
-
-# Notebook Support
-ipykernel
-
-# Plot vessel routes
+# Visualization & Mapping
+matplotlib
+plotly
 folium
+branca
+
+# Interactive Environment (Jupyter)
+ipykernel
+ipython
