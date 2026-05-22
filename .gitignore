@@ -1,6 +1,12 @@
 # Environments
 .venv
 
+# VSCode
+
+.vscode
+
+# References
+.docs
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
@@ -11,8 +17,6 @@ __pycache__/
 
 # Data file
 data/raw/
-data/processed/
-data/hmm_tests/
 *.txt
 *.csv
 *.parquet

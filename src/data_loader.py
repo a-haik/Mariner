@@ -1,3 +1,4 @@
+# src/data_loader.py
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -12,7 +13,8 @@ class VesselDataLoader:
         self.clean_df: Optional[pd.DataFrame] = None
 
     def _find_footer_start(self, delimiter: str = ",") -> int:
-        with open(self.file_path, 'r') as f:
+        """Locates the end of the viable data frame to drop irregular footer tags."""
+        with open(self.file_path, 'r', encoding='utf-8') as f:
             for i, line in enumerate(f):
                 if "Tag Name" in line or line.strip().startswith(delimiter * 5):
                     return i
@@ -26,8 +28,9 @@ class VesselDataLoader:
         if not all(col in df.columns for col in req_cols):
             return
 
-        lat_sign = np.where(df['LAT-NS'] == 83, -1.0, 1.0) # South=83, North=78
-        lon_sign = np.where(df['LONG-EW'] == 87, -1.0, 1.0) # West=87, East=69
+        # N=78, S=83, E=69, W=87 (ASCII values commonly found in ship logs)
+        lat_sign = np.where(df['LAT-NS'] == 83, -1.0, 1.0) 
+        lon_sign = np.where(df['LONG-EW'] == 87, -1.0, 1.0) 
 
         df['LATITUDE(DD)'] = lat_sign * (df['LAT-DEG(degree)'] + (df['LAT-MIN(min)'] / 60.0))
         df['LONGITUDE(DD)'] = lon_sign * (df['LONG-DEG(degree)'] + (df['LONG-MIN(min)'] / 60.0))
@@ -38,16 +41,14 @@ class VesselDataLoader:
 
         footer_line = self._find_footer_start()
         
-        read_params = {
-            "filepath_or_buffer": self.file_path,
-            "nrows": footer_line - 1 if footer_line > 0 else None,
-            "engine": 'c',
-            "na_values": ['', ' ', 'NaN', 'null'],
-            "parse_dates": [time_col],
-            "date_format": date_format
-        }
-
-        self.raw_df = pd.read_csv(**read_params)
+        self.raw_df = pd.read_csv(
+            self.file_path,
+            nrows=footer_line - 1 if footer_line > 0 else None,
+            engine='c',
+            na_values=['', ' ', 'NaN', 'null'],
+            parse_dates=[time_col],
+            date_format=date_format
+        )
         
         if "Unnamed" in self.raw_df.columns[-1]:
             self.raw_df.rename(columns={self.raw_df.columns[-1]: "STATUS"}, inplace=True)
@@ -66,10 +67,10 @@ class VesselDataLoader:
             df['HEAD_COS'] = np.cos(rads)
             df.drop(columns=['HEADING(degree)'], inplace=True)
 
-        # Resample all linear variables
+        # Resample linear variables
         df = df.resample('5min').mean(numeric_only=True)
 
-        # Reconstruct the circular mean using arctan2
+        # Reconstruct circular mean
         if 'HEAD_SIN' in df.columns and 'HEAD_COS' in df.columns:
             mean_rads = np.arctan2(df['HEAD_SIN'], df['HEAD_COS'])
             df['HEADING(degree)'] = np.degrees(mean_rads) % 360
@@ -90,7 +91,6 @@ class VesselDataLoader:
 
         self._process_coordinates(df)
         self.clean_df = df
-        
         return self.clean_df
     
     def sanity_check(self) -> None:
@@ -119,11 +119,9 @@ class VesselDataLoader:
 
         # 2. Time-Grid Continuity
         print("\n[2] Time-Grid Continuity:")
-        # Check if the index is strictly increasing
         is_monotonic = df.index.is_monotonic_increasing
         print(f"    Strictly Monotonic Time Index: {'Pass' if is_monotonic else 'FAIL'}")
         
-        # Calculate time gaps
         time_diffs = df.index.to_series().diff()
         expected_dt = pd.Timedelta(minutes=5)
         large_gaps = time_diffs[time_diffs > expected_dt]
@@ -138,18 +136,18 @@ class VesselDataLoader:
         p_cols = ['GE162(kW)', 'GE262(kW)', 'GE362(kW)']
         if 'AE_POWER(kW)' in df.columns and all(c in df.columns for c in p_cols):
             ge_sum = df[p_cols].sum(axis=1)
-            p_offset_abs = np.abs(df['AE_POWER(kW)'] - ge_sum)
-            mean_error = p_offset_abs.mean()
-            if mean_error > 50.0: # Arbitrary threshold, adjust based on sensor accuracy
+            mean_error = np.abs(df['AE_POWER(kW)'] - ge_sum).mean()
+            if mean_error > 50.0:
                 print(f"    WARNING: High mean power imbalance between AE and Generators: {mean_error:.2f} kW")
             else:
                 print(f"    Pass: Mean power balance within acceptable limits ({mean_error:.2f} kW).")
 
         # Logical contradiction: Ship is idle but moving fast
         if 'STATUS' in df.columns and 'SHIP SPEED(knots)' in df.columns:
-            contradictions = df[(df['STATUS'] == 'Idle') & (df['SHIP SPEED(knots)'] > 8.0)]
+            # Assuring robust string matching by lowercasing the status
+            contradictions = df[(df['STATUS'].astype(str).str.lower() == 'idle') & (df['SHIP SPEED(knots)'] > 8.0)]
             if not contradictions.empty:
-                print(f"    WARNING: {len(contradictions)} logical contradictions detected (STATUS='Idle' but Speed > 10 knots).")
+                print(f"    WARNING: {len(contradictions)} logical contradictions detected (STATUS='Idle' but Speed > 8 knots).")
                 print("    This suggests manual log lagging by the crew.")
             else:
                 print("    Pass: Logged status aligns with kinematic speed.")

@@ -1,14 +1,16 @@
 # src/visualizer.py
-import matplotlib.pyplot as plt
-import folium
-from folium import plugins
-import pandas as pd
-import numpy as np
 import math
-from typing import List, Optional
+from typing import List
+
 import branca.colormap as cm
+import folium
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
+from folium import plugins
+
 from src.config import COLOR, PHYSICS
 
 # ---------------------------------------------------------
@@ -16,7 +18,16 @@ from src.config import COLOR, PHYSICS
 # ---------------------------------------------------------
 
 def _calculate_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Calculates the initial bearing (forward azimuth) between two coordinates."""
+    """
+    Calculates the initial bearing (forward azimuth) between two coordinates.
+    
+    Args:
+        lat1, lon1: Starting latitude and longitude in decimal degrees.
+        lat2, lon2: Ending latitude and longitude in decimal degrees.
+        
+    Returns:
+        float: Initial bearing in degrees.
+    """
     lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
     dlon = lon2 - lon1
     x = math.sin(dlon) * math.cos(lat2)
@@ -24,8 +35,19 @@ def _calculate_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     initial_bearing = math.atan2(x, y)
     return math.degrees(initial_bearing)
 
+
 def _get_arrow_vertices(lat: float, lon: float, bearing_deg: float, size: float = 0.005) -> List[List[float]]:
-    """Generates vertices for an arrowhead polygon."""
+    """
+    Generates vertices for an arrowhead polygon to indicate vessel direction.
+    
+    Args:
+        lat, lon: Base coordinate in decimal degrees.
+        bearing_deg: Forward azimuth in degrees.
+        size: Scaling factor for the arrow polygon.
+        
+    Returns:
+        List[List[float]]: A list of [lat, lon] pairs defining the arrow polygon.
+    """
     bearing_rad = math.radians(bearing_deg)
     cos_b, sin_b = math.cos(bearing_rad), math.sin(bearing_rad)
     lon_scale = 1.0 / math.cos(math.radians(lat))
@@ -39,6 +61,7 @@ def _get_arrow_vertices(lat: float, lon: float, bearing_deg: float, size: float 
         
     return vertices
 
+
 # ---------------------------------------------------------
 # Telemetry (Time-Series) Visualizations
 # ---------------------------------------------------------
@@ -46,12 +69,21 @@ def _get_arrow_vertices(lat: float, lon: float, bearing_deg: float, size: float 
 def plot_series(df: pd.DataFrame, 
                 columns: List[str], 
                 subplots: bool = False,
-                rolling_window: Optional[str] = None, 
-                secondary_y: Optional[str] = None,
                 status_col: str = 'STATUS',
                 **kwargs) -> tuple:
-    """A flexible plotting tool for continuous time-series telemetry."""
+    """
+    Plots continuous time-series telemetry data.
     
+    Args:
+        df: The telemetry DataFrame (must contain a DatetimeIndex).
+        columns: List of column names to plot.
+        subplots: If True, plots each column on a separate vertically-stacked axis.
+        status_col: Column name containing operational status for background shading.
+        **kwargs: Additional keyword arguments passed to plt.subplots.
+        
+    Returns:
+        tuple: Matplotlib Figure and Axes arrays.
+    """
     if df is None or df.empty:
         raise ValueError("Dataframe is empty or not loaded.")
 
@@ -78,28 +110,19 @@ def plot_series(df: pd.DataFrame,
             continue
             
         ax = axes[i] if subplots else axes[0]
-        is_secondary = (not subplots and col == secondary_y)
-        plot_ax = ax.twinx() if is_secondary else ax
         color = colors[i % len(colors)]
         
-        line, = plot_ax.plot(df.index, df[col], alpha=0.8, color=color, label=f'{col} (Raw)')
+        line, = ax.plot(df.index, df[col], alpha=0.8, color=color, label=f'{col} (Raw)')
         all_handles.append(line)
         all_labels.append(f'{col} (Raw)')
         
-        if rolling_window:
-            smoothed = df[col].rolling(window=rolling_window, center=True).mean()
-            s_line, = plot_ax.plot(df.index, smoothed, linewidth=2, color=color, 
-                                   linestyle='--', label=f'{col} (Mean {rolling_window})')
-            all_handles.append(s_line)
-            all_labels.append(f'{col} (Mean {rolling_window})')
-
         if show_status and (subplots or i == 0):
             for start, end in zip(change_indices[:-1], change_indices[1:]):
                 current_status = df.loc[start, status_col]
                 bg_color = COLOR.status_colors.get(str(current_status).lower(), 'white')
                 ax.axvspan(start, end, color=bg_color, alpha=0.3, zorder=-1)
 
-        plot_ax.set_ylabel(col, color=color if is_secondary else 'black')
+        ax.set_ylabel(col, color='black')
 
     if subplots:
         for ax in axes[:n_signal_rows]:
@@ -120,8 +143,11 @@ def plot_series(df: pd.DataFrame,
         
     return fig, axes
 
+
 def plot_trajectory_folium(df: pd.DataFrame, status_col: str = 'STATUS', arrow_step: int = 10, arrow_size: float = 0.002) -> folium.Map:
-    """Plots the vessel trajectory on an interactive Folium map."""
+    """
+    Plots the vessel trajectory on an interactive Folium map, highlighting port events.
+    """
     if df is None or 'LATITUDE(DD)' not in df.columns:
         raise ValueError("Coordinates not processed.")
 
@@ -183,12 +209,15 @@ def plot_trajectory_folium(df: pd.DataFrame, status_col: str = 'STATUS', arrow_s
 
     return vessel_map
 
+
 # ---------------------------------------------------------
 # Aggregated (Blocks & Modes) Visualizations
 # ---------------------------------------------------------
 
-def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate', print_table: bool = False) -> go.Figure:
-    """Constructs a scatter plot for individual physical blocks across datasets."""
+def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate') -> go.Figure:
+    """
+    Constructs a scatter plot mapping physical blocks across fatigue and H2 flow space.
+    """
     if registry_df.empty:
         raise ValueError("Input registry dataframe is completely empty.")
         
@@ -196,8 +225,6 @@ def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_F
     max_duration = registry_df['Duration_h'].max()
     sizeref_val = 2. * max_duration / (40.**2) 
 
-    
-    
     for mode in registry_df['MODE'].unique():
         mode_df = registry_df[registry_df['MODE'] == mode]
         color = COLOR.status_colors.get(mode, '#000000')
@@ -246,17 +273,17 @@ def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_F
     )
     return fig
 
+
 def plot_mode_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate', print_table: bool = False) -> go.Figure:
-    """Plots aggregated expected values for global operational states."""
+    """
+    Plots aggregated expected values for global operational states.
+    """
     if stats_df.empty:
         raise ValueError("Statistics DataFrame is empty.")
     
-    # --- New: Print Results Option ---
     if print_table:
         print("\n--- Operational State Statistics Summary ---")
-        # Display key columns; feel free to add/remove columns as needed
         display_df = stats_df.copy()
-        # Ensure the index (the mode name) is a column for clear printing
         if 'Mode' not in display_df.columns:
             display_df = display_df.reset_index().rename(columns={'index': 'Mode'})
         
@@ -306,14 +333,13 @@ def plot_mode_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Relative_
     )
     return fig
 
+
 def plot_scenario_tradeoff_space(compiled_results: dict) -> go.Figure:
     """
     Plots all 1000h scenarios on a single canvas mapping Degradation Index vs H2 Mass Use.
-    Uses horizontal error bars to elegant capture the fuel cell efficiency uncertainty span.
     """
     fig = go.Figure()
     
-    # Pre-instantiate a distinct color map for scannability
     color_map = {
         'Baseline': '#55A868',
         'Shore_Power': '#2653CC',
