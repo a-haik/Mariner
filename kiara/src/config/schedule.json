@@ -1,0 +1,12 @@
+[
+    {"start": "Rafina",  "end": "Andros",  "transit_mins": 75, "dwell_mins": 10},
+    {"start": "Andros",  "end": "Tinos",   "transit_mins": 55, "dwell_mins": 10},
+    {"start": "Tinos",   "end": "Mykonos", "transit_mins": 20, "dwell_mins": 10},
+    {"start": "Mykonos", "end": "Paros",   "transit_mins": 45, "dwell_mins": 10},
+    {"start": "Paros",   "end": "Naxos",   "transit_mins": 30, "dwell_mins": 10},
+    {"start": "Naxos",   "end": "Paros",   "transit_mins": 30, "dwell_mins": 10},
+    {"start": "Paros",   "end": "Mykonos", "transit_mins": 40, "dwell_mins": 15},
+    {"start": "Mykonos", "end": "Tinos",   "transit_mins": 20, "dwell_mins": 10},
+    {"start": "Tinos",   "end": "Andros",  "transit_mins": 55, "dwell_mins": 10},
+    {"start": "Andros",  "end": "Rafina",  "transit_mins": 65, "dwell_mins": 0}
+]

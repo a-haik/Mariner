@@ -1,14 +1,20 @@
-# MARINER WP9 - Core Dependencies
 
-# Data Processing & Analytics
+
 numpy
 pandas
 scipy
 
 
-# Visualization & Mapping
 matplotlib
 
-# Interactive Environment (Jupyter)
 ipykernel
 ipython
+ipywidgets
+
+xarray
+numpy
+pandas
+statsmodels
+seaborn
+
+netcdf4

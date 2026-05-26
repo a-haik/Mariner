@@ -1,0 +1,302 @@
+{
+    "1": {
+        "jacobi": {
+            "mu": 0.12018069624900818,
+            "theta": 0.027027027027027025,
+            "sigma": 0.06893499379413369
+        },
+        "k_factors": {
+            "Rafina": 0.37379851937294006,
+            "Andros": 1.057141661643982,
+            "Tinos": 1.0105396509170532,
+            "Mykonos": 1.014547348022461,
+            "Paros": 1.0068901777267456,
+            "Naxos": 0.9842128753662109,
+            "Transit_Rafina_Andros": 0.5522633790969849,
+            "Transit_Andros_Tinos": 1.069224238395691,
+            "Transit_Tinos_Mykonos": 1.0088590383529663,
+            "Transit_Mykonos_Paros": 0.9972137808799744,
+            "Transit_Paros_Naxos": 0.9972137808799744,
+            "Transit_Naxos_Paros": 0.9972137808799744,
+            "Transit_Paros_Mykonos": 0.9972137808799744,
+            "Transit_Mykonos_Tinos": 1.0088590383529663,
+            "Transit_Tinos_Andros": 1.069224238395691,
+            "Transit_Andros_Rafina": 0.5522633790969849
+        }
+    },
+    "2": {
+        "jacobi": {
+            "mu": 0.12130836397409439,
+            "theta": 0.028716216216216218,
+            "sigma": 0.06962526549219769
+        },
+        "k_factors": {
+            "Rafina": 0.3633469045162201,
+            "Andros": 1.048398494720459,
+            "Tinos": 1.0134520530700684,
+            "Mykonos": 1.0206830501556396,
+            "Paros": 1.012570858001709,
+            "Naxos": 0.993844747543335,
+            "Transit_Rafina_Andros": 0.5461877584457397,
+            "Transit_Andros_Tinos": 1.0666871070861816,
+            "Transit_Tinos_Mykonos": 1.017074704170227,
+            "Transit_Mykonos_Paros": 1.0044686794281006,
+            "Transit_Paros_Naxos": 1.0044686794281006,
+            "Transit_Naxos_Paros": 1.0044686794281006,
+            "Transit_Paros_Mykonos": 1.0044686794281006,
+            "Transit_Mykonos_Tinos": 1.017074704170227,
+            "Transit_Tinos_Andros": 1.0666871070861816,
+            "Transit_Andros_Rafina": 0.5461877584457397
+        }
+    },
+    "3": {
+        "jacobi": {
+            "mu": 0.09787831455469131,
+            "theta": 0.02871621621621621,
+            "sigma": 0.06634602612822174
+        },
+        "k_factors": {
+            "Rafina": 0.3429493010044098,
+            "Andros": 1.0355526208877563,
+            "Tinos": 1.0111985206604004,
+            "Mykonos": 1.0141676664352417,
+            "Paros": 1.0041847229003906,
+            "Naxos": 0.9867683053016663,
+            "Transit_Rafina_Andros": 0.5318421125411987,
+            "Transit_Andros_Tinos": 1.062340497970581,
+            "Transit_Tinos_Mykonos": 1.0110334157943726,
+            "Transit_Mykonos_Paros": 0.9969329237937927,
+            "Transit_Paros_Naxos": 0.9969329237937927,
+            "Transit_Naxos_Paros": 0.9969329237937927,
+            "Transit_Paros_Mykonos": 0.9969329237937927,
+            "Transit_Mykonos_Tinos": 1.0110334157943726,
+            "Transit_Tinos_Andros": 1.062340497970581,
+            "Transit_Andros_Rafina": 0.5318421125411987
+        }
+    },
+    "4": {
+        "jacobi": {
+            "mu": 0.06806240975856781,
+            "theta": 0.027590090090090093,
+            "sigma": 0.056329153120321954
+        },
+        "k_factors": {
+            "Rafina": 0.2862381339073181,
+            "Andros": 0.9895994663238525,
+            "Tinos": 1.0107059478759766,
+            "Mykonos": 1.008786678314209,
+            "Paros": 0.9945464730262756,
+            "Naxos": 0.9801708459854126,
+            "Transit_Rafina_Andros": 0.4782964289188385,
+            "Transit_Andros_Tinos": 1.0481828451156616,
+            "Transit_Tinos_Mykonos": 1.003541350364685,
+            "Transit_Mykonos_Paros": 0.9899364709854126,
+            "Transit_Paros_Naxos": 0.9899364709854126,
+            "Transit_Naxos_Paros": 0.9899364709854126,
+            "Transit_Paros_Mykonos": 0.9899364709854126,
+            "Transit_Mykonos_Tinos": 1.003541350364685,
+            "Transit_Tinos_Andros": 1.0481828451156616,
+            "Transit_Andros_Rafina": 0.4782964289188385
+        }
+    },
+    "5": {
+        "jacobi": {
+            "mu": 0.05218398571014404,
+            "theta": 0.026463963963963964,
+            "sigma": 0.050627349924380054
+        },
+        "k_factors": {
+            "Rafina": 0.26648351550102234,
+            "Andros": 0.964323878288269,
+            "Tinos": 1.007681131362915,
+            "Mykonos": 0.9875538349151611,
+            "Paros": 0.9635416865348816,
+            "Naxos": 0.9394590258598328,
+            "Transit_Rafina_Andros": 0.47100356221199036,
+            "Transit_Andros_Tinos": 1.0308277606964111,
+            "Transit_Tinos_Mykonos": 0.9832668900489807,
+            "Transit_Mykonos_Paros": 0.9561626315116882,
+            "Transit_Paros_Naxos": 0.9561626315116882,
+            "Transit_Naxos_Paros": 0.9561626315116882,
+            "Transit_Paros_Mykonos": 0.9561626315116882,
+            "Transit_Mykonos_Tinos": 0.9832668900489807,
+            "Transit_Tinos_Andros": 1.0308277606964111,
+            "Transit_Andros_Rafina": 0.47100356221199036
+        }
+    },
+    "6": {
+        "jacobi": {
+            "mu": 0.055886201560497284,
+            "theta": 0.023437500000000003,
+            "sigma": 0.043207423469066045
+        },
+        "k_factors": {
+            "Rafina": 0.22229303419589996,
+            "Andros": 0.8566964268684387,
+            "Tinos": 1.0232374668121338,
+            "Mykonos": 1.008185625076294,
+            "Paros": 0.9673072695732117,
+            "Naxos": 0.9685265421867371,
+            "Transit_Rafina_Andros": 0.4246617555618286,
+            "Transit_Andros_Tinos": 0.9858734011650085,
+            "Transit_Tinos_Mykonos": 1.0046133995056152,
+            "Transit_Mykonos_Paros": 0.9706867933273315,
+            "Transit_Paros_Naxos": 0.9706867933273315,
+            "Transit_Naxos_Paros": 0.9706867933273315,
+            "Transit_Paros_Mykonos": 0.9706867933273315,
+            "Transit_Mykonos_Tinos": 1.0046133995056152,
+            "Transit_Tinos_Andros": 0.9858734011650085,
+            "Transit_Andros_Rafina": 0.4246617555618286
+        }
+    },
+    "7": {
+        "jacobi": {
+            "mu": 0.09254129976034164,
+            "theta": 0.019483024691358028,
+            "sigma": 0.04139164128442496
+        },
+        "k_factors": {
+            "Rafina": 0.22959290444850922,
+            "Andros": 0.8852236866950989,
+            "Tinos": 1.0273762941360474,
+            "Mykonos": 1.0085220336914062,
+            "Paros": 0.9524906277656555,
+            "Naxos": 0.9400730133056641,
+            "Transit_Rafina_Andros": 0.43900471925735474,
+            "Transit_Andros_Tinos": 1.0009747743606567,
+            "Transit_Tinos_Mykonos": 1.0147955417633057,
+            "Transit_Mykonos_Paros": 0.9529677033424377,
+            "Transit_Paros_Naxos": 0.9529677033424377,
+            "Transit_Naxos_Paros": 0.9529677033424377,
+            "Transit_Paros_Mykonos": 0.9529677033424377,
+            "Transit_Mykonos_Tinos": 1.0147955417633057,
+            "Transit_Tinos_Andros": 1.0009747743606567,
+            "Transit_Andros_Rafina": 0.43900471925735474
+        }
+    },
+    "8": {
+        "jacobi": {
+            "mu": 0.09712019562721252,
+            "theta": 0.018171296296296297,
+            "sigma": 0.0390932556445527
+        },
+        "k_factors": {
+            "Rafina": 0.2592727541923523,
+            "Andros": 0.9627752304077148,
+            "Tinos": 1.038323163986206,
+            "Mykonos": 1.0128484964370728,
+            "Paros": 0.9516817331314087,
+            "Naxos": 0.9214786887168884,
+            "Transit_Rafina_Andros": 0.4826076924800873,
+            "Transit_Andros_Tinos": 1.0417084693908691,
+            "Transit_Tinos_Mykonos": 1.0244220495224,
+            "Transit_Mykonos_Paros": 0.9465158581733704,
+            "Transit_Paros_Naxos": 0.9465158581733704,
+            "Transit_Naxos_Paros": 0.9465158581733704,
+            "Transit_Paros_Mykonos": 0.9465158581733704,
+            "Transit_Mykonos_Tinos": 1.0244220495224,
+            "Transit_Tinos_Andros": 1.0417084693908691,
+            "Transit_Andros_Rafina": 0.4826076924800873
+        }
+    },
+    "9": {
+        "jacobi": {
+            "mu": 0.08563333004713058,
+            "theta": 0.020293209876543213,
+            "sigma": 0.048989034668755475
+        },
+        "k_factors": {
+            "Rafina": 0.2916405498981476,
+            "Andros": 1.0055352449417114,
+            "Tinos": 1.01285982131958,
+            "Mykonos": 0.9914957880973816,
+            "Paros": 0.9437170028686523,
+            "Naxos": 0.9181809425354004,
+            "Transit_Rafina_Andros": 0.504410982131958,
+            "Transit_Andros_Tinos": 1.0639115571975708,
+            "Transit_Tinos_Mykonos": 0.9938943982124329,
+            "Transit_Mykonos_Paros": 0.9381669163703918,
+            "Transit_Paros_Naxos": 0.9381669163703918,
+            "Transit_Naxos_Paros": 0.9381669163703918,
+            "Transit_Paros_Mykonos": 0.9381669163703918,
+            "Transit_Mykonos_Tinos": 0.9938943982124329,
+            "Transit_Tinos_Andros": 1.0639115571975708,
+            "Transit_Andros_Rafina": 0.504410982131958
+        }
+    },
+    "10": {
+        "jacobi": {
+            "mu": 0.10003131628036499,
+            "theta": 0.02199074074074074,
+            "sigma": 0.0552858042903245
+        },
+        "k_factors": {
+            "Rafina": 0.36186152696609497,
+            "Andros": 1.0699902772903442,
+            "Tinos": 0.9686122536659241,
+            "Mykonos": 0.9381411075592041,
+            "Paros": 0.9229849576950073,
+            "Naxos": 0.8794116973876953,
+            "Transit_Rafina_Andros": 0.5660244226455688,
+            "Transit_Andros_Tinos": 1.076825737953186,
+            "Transit_Tinos_Mykonos": 0.9401424527168274,
+            "Transit_Mykonos_Paros": 0.9068372845649719,
+            "Transit_Paros_Naxos": 0.9068372845649719,
+            "Transit_Naxos_Paros": 0.9068372845649719,
+            "Transit_Paros_Mykonos": 0.9068372845649719,
+            "Transit_Mykonos_Tinos": 0.9401424527168274,
+            "Transit_Tinos_Andros": 1.076825737953186,
+            "Transit_Andros_Rafina": 0.5660244226455688
+        }
+    },
+    "11": {
+        "jacobi": {
+            "mu": 0.09630730748176575,
+            "theta": 0.029417438271604937,
+            "sigma": 0.06218893659304371
+        },
+        "k_factors": {
+            "Rafina": 0.38511016964912415,
+            "Andros": 1.0733455419540405,
+            "Tinos": 0.9770289659500122,
+            "Mykonos": 0.959322452545166,
+            "Paros": 0.9565359950065613,
+            "Naxos": 0.9187171459197998,
+            "Transit_Rafina_Andros": 0.5729438066482544,
+            "Transit_Andros_Tinos": 1.0715103149414062,
+            "Transit_Tinos_Mykonos": 0.956430196762085,
+            "Transit_Mykonos_Paros": 0.939863920211792,
+            "Transit_Paros_Naxos": 0.939863920211792,
+            "Transit_Naxos_Paros": 0.939863920211792,
+            "Transit_Paros_Mykonos": 0.939863920211792,
+            "Transit_Mykonos_Tinos": 0.956430196762085,
+            "Transit_Tinos_Andros": 1.0715103149414062,
+            "Transit_Andros_Rafina": 0.5729438066482544
+        }
+    },
+    "12": {
+        "jacobi": {
+            "mu": 0.11342348158359528,
+            "theta": 0.027777777777777776,
+            "sigma": 0.06856350806630236
+        },
+        "k_factors": {
+            "Rafina": 0.3944591283798218,
+            "Andros": 1.0746077299118042,
+            "Tinos": 0.9972806572914124,
+            "Mykonos": 0.9966626763343811,
+            "Paros": 0.9918088316917419,
+            "Naxos": 0.966825008392334,
+            "Transit_Rafina_Andros": 0.5700730085372925,
+            "Transit_Andros_Tinos": 1.073171854019165,
+            "Transit_Tinos_Mykonos": 0.9912117719650269,
+            "Transit_Mykonos_Paros": 0.9805728793144226,
+            "Transit_Paros_Naxos": 0.9805728793144226,
+            "Transit_Naxos_Paros": 0.9805728793144226,
+            "Transit_Paros_Mykonos": 0.9805728793144226,
+            "Transit_Mykonos_Tinos": 0.9912117719650269,
+            "Transit_Tinos_Andros": 1.073171854019165,
+            "Transit_Andros_Rafina": 0.5700730085372925
+        }
+    }
+}
