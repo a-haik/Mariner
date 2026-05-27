@@ -13,6 +13,7 @@ POWER_CONFIG = {
     'tau_gust_slow': 600.0,    
     'tau_gust_fast': 30.0,     
     'tau_human': 8.0,              # Human-in-the-loop bridge handle hold lag constant
+    'tau_drift': 180.0,
 
     # Structural Atmospheric Noise Constants
     'sigma_slow_gust_base': 0.05,  # Amplitude of meso-scale drift variations

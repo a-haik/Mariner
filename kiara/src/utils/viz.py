@@ -53,6 +53,9 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
     view_end = df_slice['timestamp'].max()
     view_start = df_slice['timestamp'].min()
     
+    # Track which index maps to the auxiliary panel for specific legend filtering
+    aux_axis_idx = None
+
     # Tier 1: Environmental Metrics Configuration
     if export_params['show_weather']:
         ax = axes[ax_idx]
@@ -63,7 +66,7 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
         ax.set_ylabel('Weather Index', fontweight='bold')
         ax.set_ylim(0.0, min(1.02, df_slice['W_effective'].max() + 0.05))
         ax.grid(True, alpha=0.15)
-        ax.legend(loc='upper right', fontsize=f_size - 1)
+        ax.legend(loc='lower right', fontsize=f_size - 1)
         if ax_idx == 0:
             ax.set_title("KIARA High-Speed Ferry Telemetry Analysis", fontweight='bold')
         ax_idx += 1
@@ -73,12 +76,12 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
         ax = axes[ax_idx]
         ax.plot(df_slice['timestamp'], df_slice['P_main_kW'], color='#d62728', alpha=signal_alpha, label='Signal')
         if trend_toggle:
-            ax.plot(df_slice['timestamp'], df_slice['P_main_kW'].rolling(60, center=True).mean(), color='darkred', linewidth=2, label='Smoothed Signal')
+            ax.plot(df_slice['timestamp'], df_slice['P_main_kW'].rolling(300, center=True).mean(), color='darkred', linewidth=2, label='Smoothed Signal')
         ax.plot(df_slice['timestamp'], nominal_main, color='black', linestyle=':', linewidth=1.75, drawstyle='steps-post', label='Baseline')
         ax.set_ylabel('Main Power [kW]', fontweight='bold')
         ax.set_ylim(0.0, df_slice['P_main_kW'].max() + 1000.0)
         ax.grid(True, alpha=0.15)
-        ax.legend(loc='upper right', fontsize=f_size - 1)
+        ax.legend(loc='lower right', fontsize=f_size - 1)
         if ax_idx == 0:
             ax.set_title("KIARA High-Speed Ferry Telemetry Analysis", fontweight='bold')
         ax_idx += 1
@@ -86,14 +89,15 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
     # Tier 3: Electrical Auxiliary Infrastructure Configuration
     if export_params['show_auxiliary']:
         ax = axes[ax_idx]
+        aux_axis_idx = ax_idx  # Save index to locate this specific axis later
         ax.plot(df_slice['timestamp'], df_slice['P_aux_kW'], color='#2ca02c', alpha=signal_alpha, linewidth=1.2, label='Signal')
         if trend_toggle:
-            ax.plot(df_slice['timestamp'], df_slice['P_aux_kW'].rolling(60, center=True).mean(), color='darkgreen', linewidth=2, label='Smoothed Signal')
+            ax.plot(df_slice['timestamp'], df_slice['P_aux_kW'].rolling(300, center=True).mean(), color='darkgreen', linewidth=2, label='Smoothed Signal')
         ax.plot(df_slice['timestamp'], nominal_aux, color='black', linestyle=':', linewidth=1.75, drawstyle='steps-post', label='Baseline')
         ax.set_ylabel('Auxiliary Power [kW]', fontweight='bold')
         ax.set_ylim(0.0, df_slice['P_aux_kW'].max() + 40.0)
         ax.grid(True, alpha=0.15)
-        ax.legend(loc='upper right', fontsize=f_size - 1)
+        ax.legend(loc='lower right', fontsize=f_size - 1)
         if ax_idx == 0:
             ax.set_title("KIARA High-Speed Ferry Telemetry Analysis", fontweight='bold')
         ax_idx += 1
@@ -111,12 +115,12 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
 
     # Inject macro background colors and red delay hatching onto every visible subpanel
     c_map = {'transit': '#1f77b4', 'maneuvering': '#9467bd', 'port_dwell': '#ff7f0e'}
-    for ax in axes:
+    for idx, ax in enumerate(axes):
         for _, r in df_timeline.iterrows():
             if r['start_time'] > view_end or r['end_time'] < view_start: continue
             t_start = max(r['start_time'], view_start)
             t_end = min(r['end_time'], view_end)
-            ax.axvspan(t_start, t_end, color=c_map.get(r['state'], 'white'), alpha=0.05)
+            ax.axvspan(t_start, t_end, color=c_map.get(r['state'], 'white'), alpha=0.15)
 
             if delay_toggle and r.get('delay_mins', 0) > 0:
                 nominal_end_time = r['end_time'] - pd.Timedelta(minutes=r['delay_mins'])
@@ -126,14 +130,20 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
                     if h_end > h_start:
                         ax.axvspan(h_start, h_end, hatch='//', edgecolor='red', facecolor='none', alpha=0.20)
 
-        # Append background legends explicitly
-        h, l = ax.get_legend_handles_labels()
-        h.extend([
-            mpatches.Patch(color='#1f77b4', alpha=0.15, label='Transit'),
-            mpatches.Patch(color='#9467bd', alpha=0.15, label='Maneuvering'),
-            mpatches.Patch(color='#ff7f0e', alpha=0.15, label='Loading')
-        ])
-        ax.legend(handles=h, loc='upper right', fontsize=f_size - 1)
+        # --- CHANGES MADE HERE ---
+        # Only append background color legend handles if this is the Auxiliary Plot pane.
+        # If Auxiliary is completely turned off via widgets, fallback to normal legends.
+        if aux_axis_idx is not None and idx == aux_axis_idx:
+            h, l = ax.get_legend_handles_labels()
+            h.extend([
+                mpatches.Patch(color='#1f77b4', alpha=0.15, label='Transit'),
+                mpatches.Patch(color='#9467bd', alpha=0.15, label='Maneuvering'),
+                mpatches.Patch(color='#ff7f0e', alpha=0.15, label='Loading')
+            ])
+            ax.legend(handles=h, loc='lower right', fontsize=f_size - 1)
+        elif aux_axis_idx is None:
+            # Traditional behavior if the auxiliary chart isn't rendered at all
+            pass 
 
     plt.tight_layout()
     return fig
@@ -164,14 +174,14 @@ def build_interactive_dashboard(schedule_path, weather_path):
     # --- COLUMN 2: WEATHER PROFILE ---
     month_dd = widgets.Dropdown(options=month_options, value='1', description='Month:', style=style, layout=w_layout)
     w0_slider = widgets.FloatSlider(value=0.15, min=0.0, max=1.0, step=0.05, description='Initial Weather Level (W0):', style=style, layout=w_layout)
-    rng_seed_w = widgets.IntSlider(value=42, min=1, max=100, description='RNG Seed:', style=style, layout=w_layout)
-    gust_frac = widgets.FloatSlider(value=40.0, min=0.0, max=100.0, step=5.0, description='Wind Gust Turbulence (%):', style=style, layout=w_layout)
+    rng_seed_w = widgets.IntSlider(value=16, min=1, max=100, description='RNG Seed:', style=style, layout=w_layout)
+    gust_frac = widgets.FloatSlider(value=50.0, min=0.0, max=100.0, step=5.0, description='Wind Gust Turbulence (%):', style=style, layout=w_layout)
     
     # --- COLUMN 3: MODEL PARAMETERS ---
-    wave_res = widgets.FloatSlider(value=15.0, min=0.0, max=40.0, step=1.0, description='Added Wave Resistance (%):', style=style, layout=w_layout)
+    wave_res = widgets.FloatSlider(value=100.0, min=0.0, max=100.0, step=1.0, description='Added Wave Resistance (%):', style=style, layout=w_layout)
     sigma_frac = widgets.FloatSlider(value=3.0, min=0.0, max=10.0, step=0.5, description='Load Drift Amplitude (%):', style=style, layout=w_layout)
     delta_inst_w = widgets.FloatSlider(value=0.5, min=0.0, max=3.0, step=0.1, description='Telemetry Sensor Error (%):', style=style, layout=w_layout)
-    maneuver_time_w = widgets.FloatSlider(value=6.0, min=2.0, max=12.0, step=0.5, description='Maneuver Time (Mins):', style=style, layout=w_layout)
+    maneuver_time_w = widgets.FloatSlider(value=5.0, min=2.0, max=12.0, step=0.5, description='Maneuver Time (Mins):', style=style, layout=w_layout)
     
     # --- CATEGORY 4: PRESENTATION SNAPSHOT CONTROLS (Accordion Menu) ---
     font_size_w = widgets.IntSlider(value=11, min=8, max=24, description='Presentation Font Size:', style=style, layout=w_layout)
