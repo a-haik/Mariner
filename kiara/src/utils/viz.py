@@ -68,7 +68,7 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
         ax.grid(True, alpha=0.15)
         ax.legend(loc='lower right', fontsize=f_size - 1)
         if ax_idx == 0:
-            ax.set_title("KIARA High-Speed Ferry Telemetry Analysis", fontweight='bold')
+            ax.set_title("KIARA High-Speed Ferry Telemetry Simulation", fontweight='bold')
         ax_idx += 1
 
     # Tier 2: Main Propulsion Configuration
@@ -83,7 +83,7 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
         ax.grid(True, alpha=0.15)
         ax.legend(loc='lower right', fontsize=f_size - 1)
         if ax_idx == 0:
-            ax.set_title("KIARA High-Speed Ferry Telemetry Analysis", fontweight='bold')
+            ax.set_title("KIARA High-Speed Ferry Telemetry Simulation", fontweight='bold')
         ax_idx += 1
 
     # Tier 3: Electrical Auxiliary Infrastructure Configuration
@@ -99,7 +99,7 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
         ax.grid(True, alpha=0.15)
         ax.legend(loc='lower right', fontsize=f_size - 1)
         if ax_idx == 0:
-            ax.set_title("KIARA High-Speed Ferry Telemetry Analysis", fontweight='bold')
+            ax.set_title("KIARA High-Speed Ferry Telemetry Simulation", fontweight='bold')
         ax_idx += 1
 
     # Apply x-axis date layouts to bottom-most active plot pane
@@ -173,7 +173,7 @@ def build_interactive_dashboard(schedule_path, weather_path):
     
     # --- COLUMN 2: WEATHER PROFILE ---
     month_dd = widgets.Dropdown(options=month_options, value='1', description='Month:', style=style, layout=w_layout)
-    w0_slider = widgets.FloatSlider(value=0.15, min=0.0, max=1.0, step=0.05, description='Initial Weather Level (W0):', style=style, layout=w_layout)
+    w0_slider = widgets.FloatSlider(value=0.15, min=0.0, max=1.0, step=0.01, description='Initial Weather Level (W0):', style=style, layout=w_layout)
     rng_seed_w = widgets.IntSlider(value=16, min=1, max=100, description='RNG Seed:', style=style, layout=w_layout)
     gust_frac = widgets.FloatSlider(value=50.0, min=0.0, max=100.0, step=5.0, description='Wind Gust Turbulence (%):', style=style, layout=w_layout)
     
@@ -184,7 +184,7 @@ def build_interactive_dashboard(schedule_path, weather_path):
     maneuver_time_w = widgets.FloatSlider(value=5.0, min=2.0, max=12.0, step=0.5, description='Maneuver Time (Mins):', style=style, layout=w_layout)
     
     # --- CATEGORY 4: PRESENTATION SNAPSHOT CONTROLS (Accordion Menu) ---
-    font_size_w = widgets.IntSlider(value=11, min=8, max=24, description='Presentation Font Size:', style=style, layout=w_layout)
+    font_size_w = widgets.IntSlider(value=13, min=8, max=24, description='Presentation Font Size:', style=style, layout=w_layout)
     fig_width_w = widgets.FloatSlider(value=16.0, min=8.0, max=24.0, step=0.5, description='Figure Width:', style=style, layout=w_layout)
     fig_height_w = widgets.FloatSlider(value=11.0, min=6.0, max=20.0, step=0.5, description='Figure Height:', style=style, layout=w_layout)
     

@@ -24,13 +24,13 @@ POWER_CONFIG = {
 
     # Dynamic Power Benchmarks (kW)
     'P_main_sea': 21240,       
-    'P_main_port_base': 120,   
+    'P_main_port_base': 5000,   
     'P_main_port_max': 5400,   
     'P_main_maneuver': 5000,   
     
     'P_aux_sea': 210,
     'P_aux_port_base': 120,
-    'P_aux_maneuver': 210,
+    'P_aux_maneuver': 120,
     'P_aux_spike_max': 350,    
     'P_aux_hotel': 120,        
 
