@@ -1,115 +1,179 @@
 import numpy as np
 import pandas as pd
-from scipy.signal import lfilter
-from config.vessel_specs import CLIMATE_STATS
+from config.vessel_specs import POWER_CONFIG, STATE_PHYSICS, CLIMATE_STATS
 
 class PowerGenerator:
     def __init__(self, config):
         self.config = config
-        
-    def _apply_inertia(self, target_series, tau, dt=1.0):
-        alpha = np.exp(-dt / tau)
-        return lfilter([1.0 - alpha], [1.0, -alpha], target_series)
 
-    def _generate_proportional_ou_noise(self, num_seconds, p_commanded, tau_reversion, sigma_fraction):
-        """Generates an auto-correlated OU process running on operational drift timescales."""
-        dt = 1.0
-        theta = 1.0 / tau_reversion
-        sigma_t = p_commanded * sigma_fraction
+    def _apply_first_order_inertia(self, p_commanded, tau, dt=1.0):
+        """
+        Applies a first-order low-pass filter to simulate physical engine inertia
+        and governor response lag.
+        """
+        num_steps = len(p_commanded)
+        p_actual = np.zeros(num_steps)
+        p_actual[0] = p_commanded[0]
         
-        chi = np.zeros(num_seconds)
-        for t in range(1, num_seconds):
-            drift = -theta * chi[t-1] * dt
-            diffusion = sigma_t[t-1] * np.sqrt(2.0 * theta) * np.random.normal(0, np.sqrt(dt))
-            chi[t] = chi[t-1] + drift + diffusion
+        # Calculate the discrete filter coefficient
+        alpha = dt / max(dt, tau)
+        
+        for t in range(1, num_steps):
+            p_actual[t] = p_actual[t-1] + alpha * (p_commanded[t] - p_actual[t-1])
             
+        return p_actual
+
+    def _generate_dynamic_ou_noise(self, num_seconds, p_commanded, theta_t, sigma_inf_t):
+        dt = 1.0
+        chi = np.zeros(num_seconds)
+        dW = np.random.normal(0, np.sqrt(dt), num_seconds)
+        
+        for t in range(1, num_seconds):
+            drift = -theta_t[t-1] * chi[t-1] * dt
+            
+            # Calibrate diffusion using the specific command's target capacity envelope
+            sigma_SDE = (p_commanded[t-1] * sigma_inf_t[t-1]) * np.sqrt(2.0 * theta_t[t-1])
+            
+            chi[t] = chi[t-1] + drift + (sigma_SDE * dW[t])
         return chi
 
-    def generate_traces(self, df_timeline, weather_global, k_factors, tunable_params, month_mu, dt_seconds=1):
-        total_seconds = int((df_timeline['end_time'].max() - df_timeline['start_time'].min()).total_seconds())
-        time_index = pd.date_range(start=df_timeline['start_time'].min(), periods=total_seconds, freq=f'{dt_seconds}s')
+    def _build_mode_dependent_parameters(self, df_timeline, total_seconds, base_sigma):
+        theta_t = np.zeros(total_seconds)
+        sigma_inf_t = np.zeros(total_seconds)
         
-        df_micro = pd.DataFrame({'timestamp': time_index})
-        df_micro = pd.merge_asof(df_micro, df_timeline[['start_time', 'state', 'location']], 
-                                 left_on='timestamp', right_on='start_time', direction='backward')
-        
-        k_array = df_micro['location'].map(k_factors).fillna(1.0).values
-        W_base = weather_global[:total_seconds] * k_array
-        
-        slow_gusts = self._apply_inertia(np.random.normal(0, self.config['sigma_slow_gust_base'], total_seconds), tau=self.config['tau_gust_slow'])
-        fast_gusts = self._apply_inertia(np.random.normal(0, month_mu * tunable_params['gust_amp_fraction'], total_seconds), tau=self.config['tau_gust_fast'])
-        W_eff = np.clip(W_base + slow_gusts + fast_gusts, 0.0, 1.0)
-        states = df_micro['state'].values
-        
-        W_baseline = CLIMATE_STATS['W_annual_mean']
-        W_cut_in = CLIMATE_STATS['W_annual_mean'] + (self.config['alpha_thruster_start'] * CLIMATE_STATS['W_annual_std'])
-        W_sat = CLIMATE_STATS['W_annual_mean'] + (self.config['beta_thruster_max'] * CLIMATE_STATS['W_annual_std'])
-        
-        target_main = np.zeros(total_seconds)
-        target_hotel = np.zeros(total_seconds)     
-        target_thruster = np.zeros(total_seconds)  
-        
-        for t in range(total_seconds):
-            w = W_eff[t]
-            st = states[t]
+        current_sec = 0
+        for _, row in df_timeline.iterrows():
+            duration_secs = int((row['end_time'] - row['start_time']).total_seconds())
+            state = row['state']
             
-            if st == 'transit':
-                delta_w = max(0.0, w - W_baseline)
-                target_main[t] = self.config['P_main_sea'] * (1.0 + (tunable_params['wave_resistance_factor'] * delta_w))
-                target_hotel[t] = self.config['P_aux_sea']
-                target_thruster[t] = 0.0 
-                
-            elif st == 'maneuvering':
-                target_hotel[t] = self.config['P_aux_maneuver']
-                if w <= W_cut_in:
-                    target_main[t] = self.config['P_main_maneuver']
-                    target_thruster[t] = 0.0
-                else:
-                    gamma = np.clip((w - W_cut_in) / (W_sat - W_cut_in), 0.0, 1.0)
-                    target_main[t] = self.config['P_main_maneuver'] + gamma * (self.config['P_main_port_max'] - self.config['P_main_maneuver'])
-                    target_thruster[t] = gamma * (self.config['P_aux_spike_max'] - self.config['P_aux_maneuver'])
-                    
-            elif st == 'port_dwell':
-                target_hotel[t] = self.config['P_aux_port_base']
-                if w <= W_cut_in:
-                    target_main[t] = self.config['P_main_port_base']
-                    target_thruster[t] = 0.0
-                else:
-                    gamma = np.clip((w - W_cut_in) / (W_sat - W_cut_in), 0.0, 1.0)
-                    target_main[t] = self.config['P_main_port_base'] + gamma * (self.config['P_main_port_max'] - self.config['P_main_port_base'])
-                    target_thruster[t] = gamma * (self.config['P_aux_spike_max'] - self.config['P_aux_port_base'])
-                    
-            elif st == 'overnight_dwell':
-                target_main[t] = 0.0
-                target_hotel[t] = self.config['P_aux_hotel']
-                target_thruster[t] = 0.0
+            physics = STATE_PHYSICS.get(state, STATE_PHYSICS['transit'])
+            end_sec = min(current_sec + duration_secs, total_seconds)
+            
+            theta_t[current_sec:end_sec] = 1.0 / max(1.0, physics['tau'])
+            sigma_inf_t[current_sec:end_sec] = base_sigma * physics['sigma_multiplier']
+            
+            current_sec = end_sec
+            
+        return theta_t, sigma_inf_t
 
-        # Apply system plant inertia to command tracking paths
-        p_main_commanded = self._apply_inertia(target_main, tau=self.config['tau_diesel'])
-        p_hotel_commanded = self._apply_inertia(target_hotel, tau=self.config['tau_electric'])
-        p_thruster_commanded = self._apply_inertia(target_thruster, tau=self.config['tau_human'])
+    def generate_traces(self, df_timeline, weather_global, k_factors, tunable_params, month_mu, dt_seconds=1):
+        total_seconds = int((df_timeline['end_time'].iloc[-1] - df_timeline['start_time'].iloc[0]).total_seconds())
         
-        # --- CRITICAL REFACTOR: Map memory noise loops directly to the operational drift timescale ---
-        t_drift = self.config['tau_drift']
-        ou_noise_main = self._generate_proportional_ou_noise(total_seconds, p_main_commanded, t_drift, tunable_params['sigma_fraction'])
-        ou_noise_hotel = self._generate_proportional_ou_noise(total_seconds, p_hotel_commanded, t_drift, tunable_params['sigma_fraction'] * self.config['aux_volatility_reduction'])
-        ou_noise_thruster = self._generate_proportional_ou_noise(total_seconds, p_thruster_commanded, t_drift, tunable_params['sigma_fraction'])
+        # 1. Initialize second-by-second target arrays
+        p_main_commanded = np.zeros(total_seconds)
+        p_hotel_commanded = np.zeros(total_seconds)
+        p_thruster_commanded = np.zeros(total_seconds)
+        state_series = []
         
-        # Compile and intercept negative boundary errors before fuzz injection
+        # Pre-calculate climate boundaries for thrusters
+        w_mean = CLIMATE_STATS['W_annual_mean']
+        w_std = CLIMATE_STATS['W_annual_std']
+        w_cut_in = w_mean + self.config['alpha_thruster_start'] * w_std
+        w_saturation = w_mean + self.config['beta_thruster_max'] * w_std
+        
+        # Build second-by-second baseline curves from state nomenclature
+        current_sec = 0
+        for _, row in df_timeline.iterrows():
+            duration_secs = int((row['end_time'] - row['start_time']).total_seconds())
+            state = row['state']
+            
+            for _ in range(duration_secs):
+                if current_sec >= total_seconds: break
+                w_curr = weather_global[current_sec]
+                state_series.append(state)
+                
+                # Dynamic weather factors used across multiple states
+                w_factor = np.clip((w_curr - w_mean) / (w_std * 2.0), 0.0, 1.0)
+                
+                # Calculate active thruster scaling factor if weather breaks the threshold
+                if w_curr > w_cut_in:
+                    t_factor = np.clip((w_curr - w_cut_in) / (w_saturation - w_cut_in), 0.0, 1.0)
+                else:
+                    t_factor = 0.0
+
+                # --- MODE DISPATCHING LOGIC ---
+                if state == 'transit':
+                    wave_res_mult = 1.0 + (w_curr * tunable_params.get('wave_resistance_factor', 0.0))
+                    p_main_commanded[current_sec] = self.config['P_main_transit'] * wave_res_mult
+                    
+                    # Transit auxiliary load is fixed at 210 kW out at sea
+                    p_hotel_commanded[current_sec] = self.config['P_aux_transit']
+                    p_thruster_commanded[current_sec] = 0.0
+                    
+                elif state == 'maneuvering':
+                    # Main propulsion scales dynamically to fight wind forces (5000 kW to 5400 kW)
+                    p_main_commanded[current_sec] = self.config['P_main_maneuver_base'] + w_factor * (self.config['P_main_maneuver_max'] - self.config['P_main_maneuver_base'])
+                    
+                    # Combined electrical infrastructure (Capped at 350 kW total load)
+                    p_hotel_commanded[current_sec] = self.config['P_aux_maneuver_base']
+                    p_thruster_commanded[current_sec] = t_factor * (self.config['P_aux_thruster_max'] - self.config['P_aux_maneuver_base'])
+                        
+                elif state == 'port_operations':
+                    # NEW: Main propulsion climbs up to 5400 kW under severe weather conditions to help pin the hull
+                    # At zero wind scaling (w_factor=0), it stays at baseline 5000 kW. 
+                    # At max wind scaling (w_factor=1), it scales up to 5400 kW.
+                    p_main_base_ops = self.config['P_main_port_ops']  # 5000 kW
+                    p_main_max_ops = self.config['P_main_maneuver_max'] # 5400 kW
+                    
+                    p_main_commanded[current_sec] = p_main_base_ops + w_factor * (p_main_max_ops - p_main_base_ops)
+                    
+                    # Thrusters remain operationally available to counter wind gusts while moored (Capped at 350 kW)
+                    p_hotel_commanded[current_sec] = self.config['P_aux_port_ops']
+                    p_thruster_commanded[current_sec] = t_factor * (self.config['P_aux_thruster_max'] - self.config['P_aux_port_ops'])
+                    
+                elif state == 'idling':
+                    # Secure main propulsion entirely (cold ironed / overnight)
+                    p_main_commanded[current_sec] = self.config['P_main_idling']
+                    
+                    # pure structural hotel baseline load, no thrusters active
+                    p_hotel_commanded[current_sec] = self.config['P_aux_idling']
+                    p_thruster_commanded[current_sec] = 0.0
+                    
+                current_sec += 1
+
+        # 2. Execute Dynamic Non-Stationary SDE calculations
+        base_sigma = tunable_params.get('sigma_fraction', 0.03)
+        theta_t, sigma_inf_t = self._build_mode_dependent_parameters(df_timeline, total_seconds, base_sigma)
+        
+        # Calculate decoupled noise tracks using clear, un-scaled target envelopes
+        ou_noise_main = self._generate_dynamic_ou_noise(total_seconds, p_main_commanded, theta_t, sigma_inf_t)
+        
+        # Scale the hotel load standard deviation envelope downward by 75%
+        sigma_inf_hotel = sigma_inf_t * self.config['aux_volatility_reduction']
+        ou_noise_hotel = self._generate_dynamic_ou_noise(total_seconds, p_hotel_commanded, theta_t, sigma_inf_hotel)
+        
+        ou_noise_thruster = self._generate_dynamic_ou_noise(total_seconds, p_thruster_commanded, theta_t, sigma_inf_t)
+        
+        # A. Compile raw noisy commands (Commanded + OU Environmental Noise)
         p_main_noisy = np.maximum(0.0, p_main_commanded + ou_noise_main)
-        p_thruster_noisy = np.clip(p_thruster_commanded + ou_noise_thruster, 0.0, None)
-        p_aux_noisy = np.maximum(0.0, (p_hotel_commanded + ou_noise_hotel) + p_thruster_noisy)
+        p_aux_noisy = np.maximum(0.0, p_hotel_commanded + p_thruster_commanded + ou_noise_hotel + ou_noise_thruster)
         
-        # Add high-frequency measurement fuzz
-        delta_inst = tunable_params['delta_instrument']
-        fuzz_main = np.random.normal(0, delta_inst * p_main_noisy)
-        fuzz_aux = np.random.normal(0, delta_inst * p_aux_noisy)
+        # B. Apply Physical Inertia Filter (NEW)
+        # Main engines feel the heavy 15-second diesel/thermal lag
+        p_main_physical = self._apply_first_order_inertia(p_main_noisy, self.config['tau_diesel'], dt=1.0)
         
-        df_micro['P_main_kW'] = np.maximum(0.0, p_main_noisy + fuzz_main)
-        df_micro['P_aux_kW'] = np.maximum(0.0, p_aux_noisy + fuzz_aux)
-        df_micro['W_effective'] = W_eff
-        df_micro['W_cut_in'] = W_cut_in
-        df_micro['W_saturation'] = W_sat
-        df_micro['W_baseline'] = W_baseline
+        # Auxiliaries/Thrusters feel the responsive 1-second electric motor lag
+        p_aux_physical = self._apply_first_order_inertia(p_aux_noisy, self.config['tau_electric'], dt=1.0)
         
+        # SCALE SENSOR FUZZ: Map the slider percentage so that the total peak-to-peak 
+        # bounds match the user's intent, treating the slider value as the 3-sigma maximum envelope limit.
+        max_fuzz_percentage = tunable_params.get('delta_instrument', 0.005)
+        sigma_sensor_fuzz = max_fuzz_percentage / 3.0
+        
+        # Inject High-Frequency Telemetry Sensor Error using calibrated standard deviation
+        fuzz_main = np.random.normal(0, sigma_sensor_fuzz * p_main_physical)
+        fuzz_aux = np.random.normal(0, sigma_sensor_fuzz * p_aux_physical)
+        
+        timestamps = pd.date_range(start=df_timeline['start_time'].iloc[0], periods=total_seconds, freq='s')
+        
+        df_micro = pd.DataFrame({
+            'timestamp': timestamps,
+            'state': state_series[:total_seconds],
+            'W_effective': weather_global[:total_seconds],
+            'P_main_kW': p_main_physical + fuzz_main,
+            'P_aux_kW': p_aux_physical + fuzz_aux,
+            'W_cut_in': w_cut_in,
+            'W_saturation': w_saturation,
+            'W_baseline': w_mean
+        })
         return df_micro

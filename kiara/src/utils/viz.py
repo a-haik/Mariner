@@ -16,13 +16,11 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
                        export_params, trend_toggle, delay_toggle):
     """
     Pure plotting core shared between interactive display and high-res disk export.
-    Allows dynamic layout manipulation based on user formatting overrides.
+    Allows dynamic layout manipulation based on user formatting overrides with adaptive y-limits.
     """
-    # Inject presentation font sizes globally
     f_size = export_params['font_size']
     plt.rcParams.update({'font.size': f_size, 'axes.labelsize': f_size + 2, 'axes.titlesize': f_size + 4})
     
-    # Track layout requirements based on boolean array visibility requests
     included_plots = []
     if export_params['show_weather']: included_plots.append('weather')
     if export_params['show_propulsion']: included_plots.append('propulsion')
@@ -34,7 +32,6 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
         ax.text(0.5, 0.5, "Select at least one plot pane", ha='center', va='center')
         return fig
         
-    # Dynamically structure height metrics depending on configuration toggles
     height_ratios = []
     if export_params['show_weather']: height_ratios.append(1.2)
     if export_params['show_propulsion']: height_ratios.append(2.5)
@@ -44,7 +41,6 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
                              sharex=True if num_plots > 1 else False,
                              gridspec_kw={'height_ratios': height_ratios} if num_plots > 1 else None)
     
-    # Normalize axes list format if only one plot is selected
     if num_plots == 1:
         axes = [axes]
         
@@ -53,18 +49,28 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
     view_end = df_slice['timestamp'].max()
     view_start = df_slice['timestamp'].min()
     
-    # Track which index maps to the auxiliary panel for specific legend filtering
     aux_axis_idx = None
 
     # Tier 1: Environmental Metrics Configuration
     if export_params['show_weather']:
         ax = axes[ax_idx]
         ax.plot(df_slice['timestamp'], df_slice['W_effective'], color='purple', linewidth=1.8, label="Weather Index")
-        ax.axhline(df_slice['W_cut_in'].iloc[0], color='darkorange', linestyle='--', alpha=0.8, label="Thruster Activation")
-        ax.axhline(df_slice['W_saturation'].iloc[0], color='darkred', linestyle='--', alpha=0.8, label="Thruster Saturation")
-        ax.axhline(df_slice['W_baseline'].iloc[0], color='blue', linestyle=':', alpha=0.6, label="Baseline")
+        
+        # Capture reference values for threshold tracking arrays
+        w_cut = df_slice['W_cut_in'].iloc[0]
+        w_sat = df_slice['W_saturation'].iloc[0]
+        w_base = df_slice['W_baseline'].iloc[0]
+        
+        ax.axhline(w_cut, color='darkorange', linestyle='--', alpha=0.8, label="Thruster Activation")
+        ax.axhline(w_sat, color='darkred', linestyle='--', alpha=0.8, label="Thruster Saturation")
+        ax.axhline(w_base, color='blue', linestyle=':', alpha=0.6, label="Baseline")
         ax.set_ylabel('Weather Index', fontweight='bold')
-        ax.set_ylim(0.0, min(1.02, df_slice['W_effective'].max() + 0.05))
+        
+        # Dynamic weather y-bounds: must encompass all threshold lines and active weather variations
+        w_min_val = min(df_slice['W_effective'].min(), w_base, w_cut)
+        w_max_val = max(df_slice['W_effective'].max(), w_sat)
+        ax.set_ylim(max(0.0, w_min_val - 0.05), min(1.02, w_max_val + 0.05))
+        
         ax.grid(True, alpha=0.15)
         ax.legend(loc='lower right', fontsize=f_size - 1)
         if ax_idx == 0:
@@ -79,7 +85,13 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
             ax.plot(df_slice['timestamp'], df_slice['P_main_kW'].rolling(300, center=True).mean(), color='darkred', linewidth=2, label='Smoothed Signal')
         ax.plot(df_slice['timestamp'], nominal_main, color='black', linestyle=':', linewidth=1.75, drawstyle='steps-post', label='Baseline')
         ax.set_ylabel('Main Power [kW]', fontweight='bold')
-        ax.set_ylim(0.0, df_slice['P_main_kW'].max() + 1000.0)
+        
+        # Adaptive Y-Limits based on local telemetry extrema
+        p_main_min = min(df_slice['P_main_kW'].min(), nominal_main.min())
+        p_main_max = max(df_slice['P_main_kW'].max(), nominal_main.max())
+        padding_main = (p_main_max - p_main_min) * 0.05 if (p_main_max - p_main_min) > 0 else 100.0
+        ax.set_ylim(max(0.0, p_main_min - padding_main), p_main_max + padding_main)
+        
         ax.grid(True, alpha=0.15)
         ax.legend(loc='lower right', fontsize=f_size - 1)
         if ax_idx == 0:
@@ -89,20 +101,25 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
     # Tier 3: Electrical Auxiliary Infrastructure Configuration
     if export_params['show_auxiliary']:
         ax = axes[ax_idx]
-        aux_axis_idx = ax_idx  # Save index to locate this specific axis later
+        aux_axis_idx = ax_idx  
         ax.plot(df_slice['timestamp'], df_slice['P_aux_kW'], color='#2ca02c', alpha=signal_alpha, linewidth=1.2, label='Signal')
         if trend_toggle:
             ax.plot(df_slice['timestamp'], df_slice['P_aux_kW'].rolling(300, center=True).mean(), color='darkgreen', linewidth=2, label='Smoothed Signal')
         ax.plot(df_slice['timestamp'], nominal_aux, color='black', linestyle=':', linewidth=1.75, drawstyle='steps-post', label='Baseline')
         ax.set_ylabel('Auxiliary Power [kW]', fontweight='bold')
-        ax.set_ylim(0.0, df_slice['P_aux_kW'].max() + 40.0)
+        
+        # Adaptive Y-Limits based on local telemetry extrema
+        p_aux_min = min(df_slice['P_aux_kW'].min(), nominal_aux.min())
+        p_aux_max = max(df_slice['P_aux_kW'].max(), nominal_aux.max())
+        padding_aux = (p_aux_max - p_aux_min) * 0.05 if (p_aux_max - p_aux_min) > 0 else 20.0
+        ax.set_ylim(max(0.0, p_aux_min - padding_aux), p_aux_max + padding_aux)
+        
         ax.grid(True, alpha=0.15)
         ax.legend(loc='lower right', fontsize=f_size - 1)
         if ax_idx == 0:
             ax.set_title("KIARA High-Speed Ferry Telemetry Simulation", fontweight='bold')
         ax_idx += 1
 
-    # Apply x-axis date layouts to bottom-most active plot pane
     bottom_ax = axes[-1]
     bottom_ax.set_xlabel('Timeline Horizon', fontweight='bold')
     duration_hours = (view_end - view_start).total_seconds() / 3600.0
@@ -113,8 +130,12 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
     else:
         bottom_ax.xaxis.set_major_formatter(mdates.DateFormatter('Day %d, %H:%M'))
 
-    # Inject macro background colors and red delay hatching onto every visible subpanel
-    c_map = {'transit': '#1f77b4', 'maneuvering': '#9467bd', 'port_dwell': '#ff7f0e'}
+    c_map = {
+        'transit': '#1f77b4', 
+        'maneuvering': '#9467bd', 
+        'port_operations': '#ff7f0e',
+        'idling': "#b6b6b6" 
+    }
     for idx, ax in enumerate(axes):
         for _, r in df_timeline.iterrows():
             if r['start_time'] > view_end or r['end_time'] < view_start: continue
@@ -130,20 +151,15 @@ def generate_core_plot(df_slice, df_timeline, nominal_main, nominal_aux, tunable
                     if h_end > h_start:
                         ax.axvspan(h_start, h_end, hatch='//', edgecolor='red', facecolor='none', alpha=0.20)
 
-        # --- CHANGES MADE HERE ---
-        # Only append background color legend handles if this is the Auxiliary Plot pane.
-        # If Auxiliary is completely turned off via widgets, fallback to normal legends.
         if aux_axis_idx is not None and idx == aux_axis_idx:
             h, l = ax.get_legend_handles_labels()
             h.extend([
-                mpatches.Patch(color='#1f77b4', alpha=0.15, label='Transit'),
-                mpatches.Patch(color='#9467bd', alpha=0.15, label='Maneuvering'),
-                mpatches.Patch(color='#ff7f0e', alpha=0.15, label='Loading')
+                mpatches.Patch(color=c_map['transit'], alpha=0.15, label='Transit'),
+                mpatches.Patch(color=c_map['maneuvering'], alpha=0.15, label='Maneuvering'),
+                mpatches.Patch(color=c_map['port_operations'], alpha=0.15, label='Port Operations'),
+                mpatches.Patch(color=c_map['idling'], alpha=0.5, label='Idling')
             ])
             ax.legend(handles=h, loc='lower right', fontsize=f_size - 1)
-        elif aux_axis_idx is None:
-            # Traditional behavior if the auxiliary chart isn't rendered at all
-            pass 
 
     plt.tight_layout()
     return fig
@@ -164,26 +180,23 @@ def build_interactive_dashboard(schedule_path, weather_path):
         ('September', '9'), ('October', '10'), ('November', '11'), ('December', '12')
     ]
     
-    # --- COLUMN 1: SIMULATION SETUP ---
+    # --- Widgets Setup ---
     sim_days_w = widgets.IntSlider(value=1, min=1, max=3, description='Horizon (Days):', style=style, layout=w_layout)
     start_hour_w = widgets.FloatSlider(value=0.0, min=0.0, max=24.0, step=5/60, description='View Start (Sim Hour):', style=style, layout=w_layout)
     duration_w = widgets.FloatSlider(value=4.5, min=5/60, max=24.0, step=5/60, description='View Duration (Hours):', style=style, layout=w_layout)
     trend_toggle = widgets.Checkbox(value=False, description='Overlay 1-Min Trend', style=style, layout=w_layout)
     delay_toggle = widgets.Checkbox(value=False, description='Simulate Delays', style=style, layout=w_layout)
     
-    # --- COLUMN 2: WEATHER PROFILE ---
     month_dd = widgets.Dropdown(options=month_options, value='1', description='Month:', style=style, layout=w_layout)
-    w0_slider = widgets.FloatSlider(value=0.15, min=0.0, max=1.0, step=0.01, description='Initial Weather Level (W0):', style=style, layout=w_layout)
+    w0_slider = widgets.FloatSlider(value=0.10, min=0.0, max=1.0, step=0.01, description='Initial Weather Level (W0):', style=style, layout=w_layout)
     rng_seed_w = widgets.IntSlider(value=16, min=1, max=100, description='RNG Seed:', style=style, layout=w_layout)
-    gust_frac = widgets.FloatSlider(value=50.0, min=0.0, max=100.0, step=5.0, description='Wind Gust Turbulence (%):', style=style, layout=w_layout)
+    gust_frac = widgets.FloatSlider(value=20.0, min=0.0, max=100.0, step=5.0, description='Wind Gust Turbulence (%):', style=style, layout=w_layout)
     
-    # --- COLUMN 3: MODEL PARAMETERS ---
-    wave_res = widgets.FloatSlider(value=100.0, min=0.0, max=100.0, step=1.0, description='Added Wave Resistance (%):', style=style, layout=w_layout)
-    sigma_frac = widgets.FloatSlider(value=3.0, min=0.0, max=10.0, step=0.5, description='Load Drift Amplitude (%):', style=style, layout=w_layout)
-    delta_inst_w = widgets.FloatSlider(value=0.5, min=0.0, max=3.0, step=0.1, description='Telemetry Sensor Error (%):', style=style, layout=w_layout)
+    wave_res = widgets.FloatSlider(value=50.0, min=0.0, max=100.0, step=5.0, description='Added Wave Resistance (%):', style=style, layout=w_layout)
+    sigma_frac = widgets.FloatSlider(value=5.0, min=0.0, max=20.0, step=1.0, description='Load Drift Amplitude (%):', style=style, layout=w_layout)
+    delta_inst_w = widgets.FloatSlider(value=0.5, min=0.0, max=5.0, step=0.1, description='Telemetry Sensor Error (%):', style=style, layout=w_layout)
     maneuver_time_w = widgets.FloatSlider(value=5.0, min=2.0, max=12.0, step=0.5, description='Maneuver Time (Mins):', style=style, layout=w_layout)
     
-    # --- CATEGORY 4: PRESENTATION SNAPSHOT CONTROLS (Accordion Menu) ---
     font_size_w = widgets.IntSlider(value=13, min=8, max=24, description='Presentation Font Size:', style=style, layout=w_layout)
     fig_width_w = widgets.FloatSlider(value=16.0, min=8.0, max=24.0, step=0.5, description='Figure Width:', style=style, layout=w_layout)
     fig_height_w = widgets.FloatSlider(value=11.0, min=6.0, max=20.0, step=0.5, description='Figure Height:', style=style, layout=w_layout)
@@ -198,8 +211,20 @@ def build_interactive_dashboard(schedule_path, weather_path):
     run_btn = widgets.Button(description='▶ Update Telemetry Profile', button_style='success', layout=widgets.Layout(width='340px', height='45px'))
     out_area = widgets.Output()
 
-    # Cached state variables to hold current active dataframes for the snapshot trigger
     cached_data = {"df_slice": None, "df_timeline": None, "nominal_main": None, "nominal_aux": None}
+
+    state_to_main = {
+        'transit': POWER_CONFIG['P_main_transit'], 
+        'maneuvering': POWER_CONFIG['P_main_maneuver_base'], 
+        'port_operations': POWER_CONFIG['P_main_port_ops'], 
+        'idling': POWER_CONFIG['P_main_idling']
+    }
+    state_to_aux = {
+        'transit': POWER_CONFIG['P_aux_transit'], 
+        'maneuvering': POWER_CONFIG['P_aux_maneuver_base'], 
+        'port_operations': POWER_CONFIG['P_aux_port_ops'], 
+        'idling': POWER_CONFIG['P_aux_idling']
+    }
 
     def update_simulation_bounds(*args):
         max_total_hours = float(sim_days_w.value * 24)
@@ -213,14 +238,14 @@ def build_interactive_dashboard(schedule_path, weather_path):
     start_hour_w.observe(update_simulation_bounds, 'value')
 
     def run_pipeline():
-        """Helper to compute simulation vectors from widget states."""
+        """Uses the unified orchestrator pipeline to run the full simulation."""
         np.random.seed(rng_seed_w.value)
         cfg = POWER_CONFIG.copy()
         
         tunable_params = {
             'wave_resistance_factor': wave_res.value * 0.01,
             'sigma_fraction': sigma_frac.value * 0.01,
-            'gust_amp_fraction': gust_frac.value * 0.01,
+            'gust_amp_fraction': gust_frac.value * 0.01, 
             'delta_instrument': delta_inst_w.value * 0.01,
             'tau_human': POWER_CONFIG['tau_human']
         }
@@ -235,22 +260,17 @@ def build_interactive_dashboard(schedule_path, weather_path):
         )
         
         orch.dispatcher.delay_params['maneuvering']['avg_mins'] = maneuver_time_w.value
-        padded_seconds = (sim_days_w.value + 1) * 24 * 3600
-        weather_global = orch._generate_jacobi_weather(padded_seconds)
         
-        df_timeline = orch.dispatcher.generate_timeline(
-            weather_array=weather_global, days=sim_days_w.value, 
-            enable_delays=delay_toggle.value, avg_maneuver_mins=maneuver_time_w.value
-        )
-        
-        df_micro = orch.power_gen.generate_traces(
-            df_timeline=df_timeline, weather_global=weather_global, k_factors=orch.k_factors, 
-            tunable_params=tunable_params, month_mu=orch.weather_params['mu'], dt_seconds=1
+        df_timeline, df_micro = orch.run_simulation(
+            tunable_params=tunable_params,
+            days=sim_days_w.value,
+            enable_delays=delay_toggle.value,
+            departure_hour=9
         )
         
         view_start = pd.Timestamp(start_date) + pd.Timedelta(hours=start_hour_w.value)
         view_end = view_start + pd.Timedelta(hours=duration_w.value)
-        df_slice = df_micro[(df_micro['timestamp'] >= view_start) & (df_micro['timestamp'] <= view_end)]
+        df_slice = df_micro[(df_micro['timestamp'] >= view_start) & (df_micro['timestamp'] <= view_end)].copy()
         
         return df_slice, df_timeline, tunable_params
 
@@ -262,20 +282,15 @@ def build_interactive_dashboard(schedule_path, weather_path):
             if df_slice.empty:
                 print("Error: Sliced index window contains zero frames. Verify your simulation hour coordinates.")
                 return
-
-            state_to_main = {'transit': POWER_CONFIG['P_main_sea'], 'maneuvering': POWER_CONFIG['P_main_maneuver'], 'port_dwell': POWER_CONFIG['P_main_port_base'], 'overnight_dwell': 0.0}
-            state_to_aux = {'transit': POWER_CONFIG['P_aux_sea'], 'maneuvering': POWER_CONFIG['P_aux_maneuver'], 'port_dwell': POWER_CONFIG['P_aux_port_base'], 'overnight_dwell': POWER_CONFIG['P_aux_hotel']}
             
             nominal_main = df_slice['state'].map(state_to_main).fillna(0.0).values
             nominal_aux = df_slice['state'].map(state_to_aux).fillna(0.0).values
 
-            # Cache the arrays for the standalone exporter hook
             cached_data["df_slice"] = df_slice
             cached_data["df_timeline"] = df_timeline
             cached_data["nominal_main"] = nominal_main
             cached_data["nominal_aux"] = nominal_aux
 
-            # Build structural parameter blocks for the current presentation views
             export_params = {
                 'font_size': font_size_w.value, 'width': fig_width_w.value, 'height': fig_height_w.value,
                 'show_weather': show_weather_w.value, 'show_propulsion': show_prop_w.value, 'show_auxiliary': show_aux_w.value
@@ -287,11 +302,8 @@ def build_interactive_dashboard(schedule_path, weather_path):
 
     def export_snapshot(b):
         with out_area:
-            # Re-generate the pipeline if the cache is empty
             if cached_data["df_slice"] is None:
                 df_slice, df_timeline, _ = run_pipeline()
-                state_to_main = {'transit': POWER_CONFIG['P_main_sea'], 'maneuvering': POWER_CONFIG['P_main_maneuver'], 'port_dwell': POWER_CONFIG['P_main_port_base'], 'overnight_dwell': 0.0}
-                state_to_aux = {'transit': POWER_CONFIG['P_aux_sea'], 'maneuvering': POWER_CONFIG['P_aux_maneuver'], 'port_dwell': POWER_CONFIG['P_aux_port_base'], 'overnight_dwell': POWER_CONFIG['P_aux_hotel']}
                 cached_data["df_slice"] = df_slice
                 cached_data["df_timeline"] = df_timeline
                 cached_data["nominal_main"] = df_slice['state'].map(state_to_main).fillna(0.0).values
@@ -302,19 +314,15 @@ def build_interactive_dashboard(schedule_path, weather_path):
                 'show_weather': show_weather_w.value, 'show_propulsion': show_prop_w.value, 'show_auxiliary': show_aux_w.value
             }
             
-            # Re-render figure off-screen using the identical active parameter layout block
             fig = generate_core_plot(cached_data["df_slice"], cached_data["df_timeline"], 
                                      cached_data["nominal_main"], cached_data["nominal_aux"], {}, 
                                      export_params, trend_toggle.value, delay_toggle.value)
             
-            # Structure safe paths into your repository documentation space
             out_dir = "../docs"
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
                 
             target_path = os.path.join(out_dir, export_filename_w.value)
-            
-            # Execute 300-DPI high-fidelity vector/raster graphics print
             fig.savefig(target_path, dpi=300, bbox_inches='tight')
             plt.close(fig)
             print(f" Success! High-resolution presentation asset exported cleanly to: {target_path}")
@@ -322,7 +330,6 @@ def build_interactive_dashboard(schedule_path, weather_path):
     run_btn.on_click(update_twin)
     export_btn.on_click(export_snapshot)
     
-    # Pack presentation overrides inside an integrated Accordion panel widget
     snapshot_panel = widgets.VBox([
         widgets.HTML("<h4><b>Fine-Tune Visual Layout Parameters for Slides</b></h4>"),
         widgets.HBox([
