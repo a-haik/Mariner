@@ -1,4 +1,4 @@
-# src/solvers/dp_multiscale.py
+# src/solvers/sdp_baseline.py
 import numpy as np
 from numba import njit
 
@@ -32,8 +32,6 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                 if n_val <= 0:
                     continue
               
-                # MATLAB Bug 1: Calculating Operational Cost OUTSIDE the action loop, 
-                # using the INHERITED state (n_val) instead of the action state (n_next).
                 C_o = ((p_val / p_star - n_val) ** 2) / n_val
                 best_cost = np.inf
                 best_action_idx = 0  

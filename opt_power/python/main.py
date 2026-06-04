@@ -5,7 +5,7 @@ from config import SimConfig
 from src.data_processing import load_and_interpolate_sov_data, calibrate_markov_chain, downsample_block_mean
 from src.simulator import Simulator
 from src.plants.fc_only_plant import FuelCellOnlyPlant
-from src.solvers.dp_multiscale import BaselineSDPSolver
+from opt_power.python.src.solvers.sdp_baseline import BaselineSDPSolver
 from src.controllers.constant import ConstantControl
 from src.controllers.threshold import ThresholdControl
 from src.controllers.stochastic import StochasticControl

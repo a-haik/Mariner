@@ -19,7 +19,7 @@ class SimConfig:
     enable_plotting: bool = True #
     
     # --- Markov Chain (DTMC) Calibration Parameters ---
-    n_states: int = 16         # Number of discrete load levels (M=16 in data execution block)
+    n_states: int = 8         # Number of discrete load levels (M=16 in data execution block)
     alpha: float = 0.5         # Dirichlet smoothing parameter for sparse transition count rows
     
     # --- Control Action Space ---
