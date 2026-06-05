@@ -16,19 +16,18 @@ class SimConfig:
     # --- Simulation Horizon Parameters ---
     Ts: int = 300              # Macro sample rate / block-mean aggregation window [s]
     num_runs: int = 1          # Number of sequential simulation runs
-    enable_plotting: bool = True #
+    enable_plotting: bool = True 
     
     # --- Markov Chain (DTMC) Calibration Parameters ---
-    n_states: int = 8         # Number of discrete load levels (M=16 in data execution block)
+    n_states: int = 8         # Number of discrete load levels 
     alpha: float = 0.5         # Dirichlet smoothing parameter for sparse transition count rows
     
     # --- Control Action Space ---
-    # Using field(default_factory=...) to generate mutable NumPy structures safely within a dataclass
     n_vals: np.ndarray = field(
-        default_factory=lambda: np.arange(1, 11, dtype=np.int32) # Invariant action space: [1, 2, ..., 10]
+        default_factory=lambda: np.arange(1, 11, dtype=np.int32) 
     )
     
-    # --- Synthetic Profile Parameters (Backward Compatibility) ---
+    # --- Synthetic Profile Parameters ---
     sigma: float = 0.5         # Standard deviation parameter for synthetic Gaussian random walks
 
     def __post_init__(self):
@@ -39,3 +38,35 @@ class SimConfig:
             raise ValueError(f"Initial module state n0={self.n0} must fall within action space n_vals.")
         if self.alpha < 0:
             raise ValueError("Dirichlet smoothing coefficient alpha cannot be negative.")
+
+
+@dataclass(frozen=True)
+class HybridSimConfig(SimConfig):
+    """
+    Extended configuration for the Multi-Timescale Augmented SDP.
+    Contains all tunable parameters for the continuous state and action spaces,
+    as well as battery physics, guaranteeing zero hardcoded values in the solvers.
+    """
+    # --- Multi-Timescale Architecture ---
+    dt: float = 30.0                # Micro-step resolution [s]
+    lambda_scale: int = 10        # Macro-step multiplier (FC power locks for lambda * dt)
+    mc_samples: int = 25          # Number of Monte Carlo paths for Variant C pre-computation
+
+    # --- Discretization & Grid Resolutions (No Hardcoding) ---
+    soc_step: float = 5.0          # Resolution of the SoC grid [%]
+    p_fc_step: float = 200.0       # Resolution of the continuous P_fc grid [kW]
+    
+    # --- Battery Physics & Degradation ---
+    e_bat: float = 10000.0          # Battery pack nominal energy capacity [kWh]
+    c_bat_kwh: float = 178.41      # Cost of battery per kWh [$]
+    n_eol_cycles: int = 3000       # Battery Cycle life to End-of-Life (EOL)
+    
+    # --- Boundary Conditions & Constraints ---
+    soc_initial: float = 50.0      # Starting State of Charge [%]
+    soc_terminal_target: float = 50.0 # Target minimum SoC at voyage completion [%]
+    penalty_wall: float = 1e12     # Hard mathematical penalty for infeasible states / grid clipping
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.lambda_scale <= 0:
+            raise ValueError("lambda_scale must be a strictly positive integer.")
