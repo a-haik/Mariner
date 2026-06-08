@@ -112,17 +112,18 @@ def plot_dashboard(sim, approach_name: str, test_day: int, layout: str = 'grid',
         per_module_pwr = fc_pwr / n_safe
         
         # Total power is a solid anchor line
-        ax2.plot(t_plot_h, fc_pwr, color=c_fc_pwr, linewidth=1.2, label='Total FC Power')
         
-        ax2.plot(t_plot_h, per_module_pwr, color=c_mod_pw, linewidth=0.8, label='Power per Module (P/n)')
+        ax2.plot(t_plot_h, per_module_pwr, color=c_mod_pw, linewidth=1.2, label='Power per Module (P/n)')
         ax2.set_ylabel("Power [kW]", fontweight='bold')
         ax2.grid(True, linestyle=':', alpha=0.5)
         
         ax2_twin = ax2.twinx()
-        ax2_twin.step(t_plot_h, n_plot, color=c_module, linewidth=1.5, where='post', linestyle='--', label='Active Modules (n)')
+        ax2_twin.step(t_plot_h, n_plot, color=c_module, linewidth=1.8, linestyle='--', where='post', label='Active Modules (n)')
         ax2_twin.set_ylabel("Active Modules", color=c_module, fontweight='bold')
         ax2_twin.tick_params(axis='y', labelcolor=c_module)
         ax2_twin.set_ylim(np.min(sim.config.n_vals) - 1, np.max(sim.config.n_vals) + 1)
+
+        ax2.plot(t_plot_h, fc_pwr, color=c_fc_pwr, linewidth=1.2, label='Total FC Power')
         
         l1, lab1 = ax2.get_legend_handles_labels()
         l2, lab2 = ax2_twin.get_legend_handles_labels()
