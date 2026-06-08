@@ -1,7 +1,3 @@
-# ==========================================
-# MARINER WP9 - Git Ignore Configuration
-# ==========================================
-
 # Environments
 .venv/
 venv/
@@ -13,16 +9,10 @@ __pycache__/
 *$py.class
 *.so
 
-# IDEs and Editors
-.vscode/
-.idea/
-
 # Jupyter Notebook Artifacts
 .ipynb_checkpoints/
 
-# ------------------------------------------
-# Data Files (CRITICAL: Do not commit!)
-# ------------------------------------------
+# Data Files
 data/raw/*
 
 # References & Local Docs
