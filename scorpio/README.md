@@ -44,7 +44,7 @@ Given the Lower Heating Value ($LHV_{H_2} = 33.32 \text{ kWh/kg}$), the pipeline
 
 The repository is structured as a functional, unidirectional data pipeline. It decouples raw I/O, signal processing, and mathematical aggregation to ensure reproducibility across different vessel datasets.
 
-### 3.1 Pipeline Execution Flow
+### Pipeline Execution Flow
 1. **`src/data_loader.py` (Ingestion & Regularization):** - **Input:** Raw, asynchronously sampled vessel telemetry (CSVs).
    - **Process:** Deduplicates timestamps, maps ASCII coordinate encodings to Decimal Degrees (DD), and enforces a strict, monotonic 5-minute time grid using linear and circular interpolation.
    - **Output:** A mathematically continuous Pandas DataFrame suitable for signal processing.
@@ -90,7 +90,28 @@ The pipeline enforces several immutable physical boundaries derived directly fro
 
 ---
 
-## 6. Setup & Installation
+## 6. Repository Structure
+
+```text
+scorpio/
+├── .docs/                  # Supplemental documentation and design notes
+├── data/
+│   └── raw/                # Raw telemetry CSVs 
+├── notebooks/
+│   └── test.ipynb          # End-to-end integration and pipeline testing
+├── src/                    # Core analytical source code
+│   ├── data_loader.py
+│   ├── data_processing.py
+│   ├── mission_profiler.py
+│   └── visualizer.py
+├── .gitignore              # Prevents tracking of datasets
+├── README.md               # Project documentation
+└── requirements.txt        # Managed dependency manifest
+```
+
+---
+
+## 7. Setup & Installation
 
 ### Prerequisites
 * **Python:** Version 3.12 or higher.
@@ -100,7 +121,7 @@ The pipeline enforces several immutable physical boundaries derived directly fro
 1. Clone the repository and navigate to the project root:
    ```bash
    git clone <repository_url>
-   cd mariner-wp9
+   cd mariner-scorpio
 2. Initialize and activate the virtual environment:
    ```bash
     python3.12 -m venv .venv
@@ -110,14 +131,12 @@ The pipeline enforces several immutable physical boundaries derived directly fro
    pip install --upgrade pip
    pip install -r requirements.txt
 ### Executing the Pipeline
-Ensure your raw vessel telemetry CSVs (e.g., Wembley_voy_236.csv) are placed in the data/raw/ directory. (Note: These files are ignored by git to protect end-user data).
+Ensure your raw vessel telemetry CSVs are placed in the data/raw/ directory.
 
-Launch the interactive Jupyter Notebook to execute the primary testing workflow:
-```bash
-jupyter notebook notebooks/test.ipynb 
-```
+Launch the interactive Jupyter Notebook to execute the primary testing workflow.
 
-## 7. Author & Acknowledgments
+
+## 8. Author & Acknowledgments
 Author: Adam Haïk - Dual-Degree Engineering & Physics Student (Mines Paris / ENS)
 
 Institution: NORCE Norwegian Research Centre AS
