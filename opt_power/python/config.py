@@ -48,13 +48,13 @@ class HybridSimConfig(SimConfig):
     as well as battery physics, guaranteeing zero hardcoded values in the solvers.
     """
     # --- Multi-Timescale Architecture ---
-    dt: float = 30.0                # Micro-step resolution [s]
-    lambda_scale: int = 10        # Macro-step multiplier (FC power locks for lambda * dt)
-    mc_samples: int = 25          # Number of Monte Carlo paths for Variant C pre-computation
+    dt: float = 5.0                # Micro-step resolution [s]
+    lambda_scale: int = 60        # Macro-step multiplier (FC power locks for lambda * dt)
+    mc_samples: int = 50          # Number of Monte Carlo paths for Variant C pre-computation
 
     # --- Discretization & Grid Resolutions (No Hardcoding) ---
-    soc_step: float = 5.0          # Resolution of the SoC grid [%]
-    p_fc_step: float = 200.0       # Resolution of the continuous P_fc grid [kW]
+    soc_step: float = 1.0          # Resolution of the SoC grid [%]
+    p_fc_step: float = 100.0       # Resolution of the continuous P_fc grid [kW]
     
     # --- Battery Physics & Degradation ---
     e_bat: float = 10000.0          # Battery pack nominal energy capacity [kWh]
