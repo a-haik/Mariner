@@ -1,0 +1,18 @@
+# MARINER WP9 - Core Dependencies
+
+# Data Processing & Analytics
+numpy
+pandas
+scipy
+rainflow
+
+# Visualization & Mapping
+matplotlib
+plotly
+folium
+branca
+nbformat>=4.2.0
+
+# Interactive Environment (Jupyter)
+ipykernel
+ipython

@@ -23,14 +23,7 @@ __pycache__/
 # ------------------------------------------
 # Data Files (CRITICAL: Do not commit!)
 # ------------------------------------------
-data/raw/
-data/processed/
-*.csv
-*.txt
-*.parquet
-*.dat
-*.hdf5
-*.h5
+data/raw/*
 
 # References & Local Docs
 .docs/
