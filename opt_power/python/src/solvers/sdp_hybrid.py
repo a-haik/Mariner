@@ -86,7 +86,7 @@ def _solve_exact_tree_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                 n_curr = n_vals[j]
                 for s in range(soc_size):
                     soc_curr = soc_vals[s]
-                    pfc_min, pfc_max = _get_pfc_bounds(soc_curr, p_vals[i], e_bat, dt)
+                    pfc_min, pfc_max = _get_pfc_bounds(soc_curr, p_vals[i], e_bat, dt * lambda_scale)
                     best_cost, best_n_next, best_pfc = np.inf, n_curr, 0.0
                     
                     for a_idx in range(n_size):
@@ -99,14 +99,15 @@ def _solve_exact_tree_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                             if p_fc < pfc_min or p_fc > pfc_max or p_fc > (n_next * p_star):
                                 continue
                             
-                            exp_cost_and_future = _dfs_exact_tree(
-                                0, lambda_scale, i, soc_curr, n_next, n_curr, p_fc, 1.0,
-                                p_vals, transition_matrix, dt, e_bat, c_bat_kwh, n_eol, 
-                                p_star, k_s, penalty_wall, V[t + 1, :, a_idx, :], soc_vals
-                            )
+                            exp_cost_and_future = _dfs_exact_tree( ... ) # (Keep arguments same)
+                            
                             total_cost = c_s + c_o[pfc_idx] + exp_cost_and_future
                             if total_cost < best_cost:
                                 best_cost, best_n_next, best_pfc = total_cost, n_next, p_fc
+                            # [FIX 3]: Doomsday tie-breaker
+                            elif best_cost >= penalty_wall and total_cost >= penalty_wall:
+                                if p_fc > best_pfc:
+                                    best_n_next, best_pfc = n_next, p_fc
                                 
                     V[t, i, j, s], policy_n[t, i, j, s], policy_pfc[t, i, j, s] = best_cost, best_n_next, best_pfc
     return policy_n, policy_pfc
@@ -144,7 +145,7 @@ def _solve_mean_proxy_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                 n_curr = n_vals[j]
                 for s in range(soc_size):
                     soc_curr = soc_vals[s]
-                    pfc_min, pfc_max = _get_pfc_bounds(soc_curr, p_vals[i], e_bat, dt)
+                    pfc_min, pfc_max = _get_pfc_bounds(soc_curr, p_vals[i], e_bat, dt * lambda_scale)
                     best_cost, best_n_next, best_pfc = np.inf, n_curr, 0.0
                     
                     for a_idx in range(n_size):
@@ -169,6 +170,9 @@ def _solve_mean_proxy_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                                     
                             if step_cost + exp_future < best_cost:
                                 best_cost, best_n_next, best_pfc = step_cost + exp_future, n_next, p_fc
+                            elif best_cost >= penalty_wall and (step_cost + exp_future) >= penalty_wall:
+                                if p_fc > best_pfc:
+                                    best_n_next, best_pfc = n_next, p_fc
                                 
                     V[t, i, j, s], policy_n[t, i, j, s], policy_pfc[t, i, j, s] = best_cost, best_n_next, best_pfc
     return policy_n, policy_pfc
@@ -192,7 +196,7 @@ def _precompute_tensor_sweep_tensors(lambda_scale: int, mc_samples: int, p_vals:
             n_next = n_vals[j]
             for pfc_idx in range(pfc_size):
                 for s in range(soc_size):
-                    pfc_min, pfc_max = _get_pfc_bounds(soc_vals[s], p_vals[i], e_bat, dt)
+                    pfc_min, pfc_max = _get_pfc_bounds(soc_vals[s], p_vals[i], e_bat, dt * lambda_scale)
                     if pfc_vals[pfc_idx] < pfc_min or pfc_vals[pfc_idx] > pfc_max or pfc_vals[pfc_idx] > (n_next * p_star):
                         continue
                         
@@ -275,6 +279,9 @@ def _solve_tensor_sweep_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                             total_cost = c_s + step_cost + exp_future
                             if total_cost < best_cost:
                                 best_cost, best_n_next, best_pfc = total_cost, n_next, pfc_vals[pfc_idx]
+                            elif best_cost >= penalty_wall and total_cost >= penalty_wall:
+                                if pfc_vals[pfc_idx] > best_pfc:
+                                    best_n_next, best_pfc = n_next, pfc_vals[pfc_idx]
                                 
                     V[t, i, j, s], policy_n[t, i, j, s], policy_pfc[t, i, j, s] = best_cost, best_n_next, best_pfc
     return policy_n, policy_pfc

@@ -60,8 +60,22 @@ class VoyageBenchmarker:
 
         # --- 2. Controller Setup (Training) ---
         if approach['strategy'] == 'SDP':
-            # Both Baseline and Hybrid SDP need a Markov Chain trained on the specific split
-            mc_model = fit_dtmc(train_data['Pd'], config.n_states, config.alpha)
+            
+            # Branch the DTMC timescale fitting based on the solver variant
+            if approach['is_hybrid']:
+                sdp_variant = approach.get('sdp_variant', 'MEAN_PROXY')
+                if sdp_variant in ['EXACT_TREE', 'TENSOR_SWEEP']:
+                    # Tensor/Exact approaches need micro-scale (dt) transition probabilities
+                    ds_train = downsample_block_mean(train_data['t'], train_data['Pd'], config.dt, align='t0')
+                else:
+                    # Mean Proxy needs macro-scale transitions (dt * lambda_scale)
+                    macro_step_sec = config.lambda_scale * config.dt
+                    ds_train = downsample_block_mean(train_data['t'], train_data['Pd'], macro_step_sec, align='t0')
+            else:
+                # Baseline explicitly uses Ts (macro-step)
+                ds_train = downsample_block_mean(train_data['t'], train_data['Pd'], config.Ts, align='t0')
+                
+            mc_model = fit_dtmc(ds_train['Pd'], config.n_states, config.alpha)
             
             if approach['is_hybrid']:
                 solver = HybridSDPSolver(config, mc_model, variant=approach.get('sdp_variant', 'MEAN_PROXY'))
