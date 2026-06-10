@@ -9,7 +9,7 @@ from src.controllers.threshold import ThresholdControl
 from src.controllers.stochastic import StochasticControl
 from src.controllers.hybrid_heuristic import HybridThresholdControl
 from src.controllers.hybrid_stochastic import HybridStochasticControl
-from src.simulator import Simulator, HybridSimulator
+from src.simulator import HybridSimulator
 
 class VoyageBenchmarker:
     """
@@ -44,76 +44,76 @@ class VoyageBenchmarker:
         raw_t = test_data['t']       # Keep the raw 1Hz timestamps
         raw_pd = test_data['Pd']     # Keep the raw 1Hz demand
         
-        # --- Micro/Macro Downsampling ---
-        if approach['is_hybrid']:
-            # Downsample 1Hz data to the micro-step (dt)
-            ds_micro = downsample_block_mean(raw_t, raw_pd, config.dt, align='t0')
-            test_target_pd = ds_micro['Pd']
-            sim_t = ds_micro['t']
-            macro_horizon = len(test_target_pd) // config.lambda_scale
-        else:
-            # Baseline requires explicitly downsampled macro-steps (Ts)
-            ds_macro = downsample_block_mean(raw_t, raw_pd, config.Ts, align='t0')
-            test_target_pd = ds_macro['Pd']
-            sim_t = ds_macro['t']
-            macro_horizon = len(test_target_pd)
+        # 1. Universal Micro/Macro Downsampling
+        ds_micro = downsample_block_mean(raw_t, raw_pd, config.dt, align='t0')
+        test_target_pd = ds_micro['Pd']
+        sim_t = ds_micro['t']
+        
+        # CRITICAL FIX: Force exact integer horizon alignment
+        macro_horizon = len(test_target_pd) // config.lambda_scale
+        
+        # 2. Extract strictly the macro profile needed for the baselines
+        macro_step_sec = config.lambda_scale * config.dt
+        ds_macro = downsample_block_mean(raw_t, raw_pd, macro_step_sec, align='t0')
+        
+        # Truncate the macro demand to exactly match the hybrid macro horizon
+        test_target_pd_macro = ds_macro['Pd'][:macro_horizon]
 
-        # --- 2. Controller Setup (Training) ---
+        # --- 2. Controller Setup ---
         if approach['strategy'] == 'SDP':
+            # Fit Macro DTMC (300s) for outer loop
+            ds_train_macro = downsample_block_mean(train_data['t'], train_data['Pd'], config.Ts, align='t0')
+            mc_macro = fit_dtmc(ds_train_macro['Pd'], config.n_states, config.alpha)
             
-            # Branch the DTMC timescale fitting based on the solver variant
-            if approach['is_hybrid']:
-                sdp_variant = approach.get('sdp_variant', 'MEAN_PROXY')
-                if sdp_variant in ['EXACT_TREE', 'TENSOR_SWEEP']:
-                    # Tensor/Exact approaches need micro-scale (dt) transition probabilities
-                    ds_train = downsample_block_mean(train_data['t'], train_data['Pd'], config.dt, align='t0')
-                else:
-                    # Mean Proxy needs macro-scale transitions (dt * lambda_scale)
-                    macro_step_sec = config.lambda_scale * config.dt
-                    ds_train = downsample_block_mean(train_data['t'], train_data['Pd'], macro_step_sec, align='t0')
-            else:
-                # Baseline explicitly uses Ts (macro-step)
-                ds_train = downsample_block_mean(train_data['t'], train_data['Pd'], config.Ts, align='t0')
+            if approach.get('is_hybrid', False):
+                # Fit Micro DTMC (5s) for inner simulation sweeps
+                ds_train_micro = downsample_block_mean(train_data['t'], train_data['Pd'], config.dt, align='t0')
                 
-            mc_model = fit_dtmc(ds_train['Pd'], config.n_states, config.alpha)
-            
-            if approach['is_hybrid']:
-                solver = HybridSDPSolver(config, mc_model, variant=approach.get('sdp_variant', 'MEAN_PROXY'))
-                pol_n, pol_pfc = solver.compute_policy_tensors(macro_horizon)
-                controller = HybridStochasticControl(config, mc_model['levels'], pol_n, pol_pfc)
+                # CRITICAL: Force the micro DTMC to use the exact same state boundaries
+                mc_micro = fit_dtmc(ds_train_micro['Pd'], config.n_states, config.alpha, precomputed_edges=mc_macro['edges'])
+                
+                # Instantiate the Solver
+                solver = HybridSDPSolver(config, mc_macro, mc_micro, variant=approach.get('sdp_variant', 'MEAN_PROXY'))
+                
+                # [THE MISSING PIECE]: Actually compute the tensors and instantiate the Hybrid Controller!
+                policy_n, policy_pfc = solver.compute_policy_tensors(macro_horizon)
+                
+                # Assuming your HybridStochasticControl __init__ expects the grids and the dual policies
+                controller = HybridStochasticControl(
+                    config=config,
+                    p_vals=mc_macro['levels'],
+                    policy_n=policy_n,
+                    policy_pfc=policy_pfc
+                )
             else:
-                solver = BaselineSDPSolver(config, mc_model)
+                # Wrap the naive SDP
+                solver = BaselineSDPSolver(config, mc_macro)
                 policy = solver.compute_policy_matrix(macro_horizon)
-                controller = StochasticControl(mc_model['levels'], config.n_vals, policy)
+                base_ctrl = StochasticControl(mc_macro['levels'], config.n_vals, policy)
+                controller = NaiveHybridWrapper(base_ctrl, test_target_pd_macro, config.n0, config.p_star)
                 
         elif approach['strategy'] == 'HEURISTIC':
-            if approach['is_hybrid']:
+            if approach.get('is_hybrid', False):
                 controller = HybridThresholdControl(config, macro_horizon, tau_relax=5.0)
             else:
-                controller = ThresholdControl(config)
-        else:
-            raise ValueError(f"Unknown strategy: {approach['strategy']}")
+                # Wrap the naive Threshold logic
+                base_ctrl = ThresholdControl(config)
+                controller = NaiveHybridWrapper(base_ctrl, test_target_pd_macro, config.n0, config.p_star)
 
-        # --- 3. Simulator Execution & Data Plumbing ---
-        if approach['is_hybrid']:
-            sim = HybridSimulator(config, test_target_pd, plant)
-            sim.t_micro = sim_t  # Attach time array for plotting
-        else:
-            sim = Simulator(config, test_target_pd, plant)
-            sim.t_macro = sim_t  # Attach time array for plotting
-            
-        # Inject the raw 1Hz background data into the simulator for plotting
+        # --- 3. Unified Simulator Execution ---
+        sim = HybridSimulator(config, test_target_pd, plant)
+        sim.t_micro = sim_t  
         sim.raw_t = raw_t
         sim.raw_pd = raw_pd
 
         sim.run(controller)
         compute_time = time.time() - start_time
-
-        # --- 4. Metric Extraction ---
-        op_cost = np.sum(sim.C_o_vec) if approach['is_hybrid'] else np.sum(sim.C_o)
-        sw_cost = np.sum(sim.C_s_vec) if approach['is_hybrid'] else np.sum(sim.C_s)
-        bat_cost = np.sum(sim.C_bat_vec) if approach['is_hybrid'] else 0.0
-        final_soc = sim.soc_history[-1] if approach['is_hybrid'] else np.nan
+        
+        # --- 4. Metric Extraction (Unified) ---
+        op_cost = np.sum(sim.C_o_vec)
+        sw_cost = np.sum(sim.C_s_vec)
+        bat_cost = np.sum(sim.C_bat_vec)
+        final_soc = sim.soc_history[-1]
 
         return {
             "Total Cost ($)": op_cost + sw_cost + bat_cost,
@@ -175,3 +175,30 @@ class VoyageBenchmarker:
             results[f"Test Day {test_day:02d}"] = metrics
             
         return pd.DataFrame.from_dict(results, orient='index')
+    
+class NaiveHybridWrapper:
+    """
+    Wraps the baseline MATLAB controllers to run inside the Multi-Timescale Hybrid physical world.
+    """
+    def __init__(self, base_controller, macro_demand_profile: np.ndarray, n0: int, p_star: float):
+        self.base_controller = base_controller
+        self.macro_demand = macro_demand_profile
+        self.p_star = p_star
+        
+        # Pre-compute the entire deterministic sequence of module decisions
+        self.n_decisions = base_controller.compute(macro_demand_profile, n0)
+
+    def get_action(self, macro_step_k: int, current_pd: float, n_prev: int, current_soc: float) -> tuple[int, float]:
+        # 1. Safely index the module count 
+        idx = min(macro_step_k, len(self.n_decisions) - 1)
+        n_k = self.n_decisions[idx]
+        
+        # 2. The baseline controller operates blindly to SoC. 
+        # It attempts to supply the mean macro demand directly from the Fuel Cells.
+        idx_demand = min(macro_step_k, len(self.macro_demand) - 1)
+        pfc_requested = self.macro_demand[idx_demand]
+        
+        # 3. Strict physical clipping (FC cannot output negative power or exceed active capacity)
+        pfc_k = np.clip(pfc_requested, 0.0, n_k * self.p_star)
+        
+        return n_k, pfc_k

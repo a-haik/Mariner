@@ -174,7 +174,8 @@ def downsample_block_mean(t: np.ndarray, y: np.ndarray, t_sec: int, align: str =
 
 
 @njit(cache=True)
-def _fit_dtmc_worker(segments: numba.typed.List, m_states: int, alpha: float):
+def _fit_dtmc_worker(segments: numba.typed.List, m_states: int, alpha: float, 
+                     use_precomputed: bool, precomp_edges: np.ndarray):
     """
     Private JIT-compiled multi-segment validation kernel.
     Accumulates transitions segment-by-segment to prevent midnight boundary errors.
@@ -189,7 +190,11 @@ def _fit_dtmc_worker(segments: numba.typed.List, m_states: int, alpha: float):
         all_samples[cursor:cursor+len(seg)] = seg
         cursor += len(seg)
         
-    edges = _make_edges_quantile_numba(all_samples, m_states)
+    if use_precomputed:
+        edges = precomp_edges
+    else:
+        edges = _make_edges_quantile_numba(all_samples, m_states)
+        
     N = np.zeros((m_states, m_states), dtype=np.float64)
     
     for seg in segments:
@@ -232,12 +237,8 @@ def _fit_dtmc_worker(segments: numba.typed.List, m_states: int, alpha: float):
         
     return P, N, stationary_pi, edges, levels
 
-
-def fit_dtmc(power_samples, m_states: int, alpha: float = 0.5) -> dict:
-    """
-    Public segment-aware interface.
-    Accepts either a single np.ndarray or a list[np.ndarray] for cross-validation gaps.
-    """
+def fit_dtmc(power_samples, m_states: int, alpha: float = 0.5, precomputed_edges: np.ndarray = None) -> dict:
+    """Public wrapper handling the optional precomputed edges."""
     numba_list = numba.typed.List()
     if isinstance(power_samples, np.ndarray):
         numba_list.append(power_samples.flatten())
@@ -247,5 +248,13 @@ def fit_dtmc(power_samples, m_states: int, alpha: float = 0.5) -> dict:
     else:
         raise TypeError("power_samples must be an ndarray or list of ndarrays")
         
-    P, N, stationary_pi, edges, levels = _fit_dtmc_worker(numba_list, m_states, alpha)
+    use_precomp = (precomputed_edges is not None)
+    # If no edges provided, pass a dummy array to keep Numba types consistent
+    dummy_edges = precomputed_edges if use_precomp else np.zeros(m_states + 1, dtype=np.float64)
+    
+    P, N, stationary_pi, edges, levels = _fit_dtmc_worker(
+        numba_list, m_states, alpha, use_precomp, dummy_edges
+    )
+    
+    return {'P': P, 'N': N, 'pi': stationary_pi, 'edges': edges, 'levels': levels}
     return {'P': P, 'N': N, 'pi': stationary_pi, 'edges': edges, 'levels': levels}
