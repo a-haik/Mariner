@@ -1,6 +1,6 @@
 # python/src/controllers/hybrid_heuristic.py
 import numpy as np
-from config import HybridSimConfig
+from config import SimConfig
 from src.plants.hybrid_plant import _get_pfc_bounds
 
 class HybridThresholdControl:
@@ -9,7 +9,7 @@ class HybridThresholdControl:
     Uses the statistical moving threshold for module switching, and a 
     charge-sustaining Proportional feedback loop for power splitting.
     """
-    def __init__(self, config: HybridSimConfig, total_macro_steps: int, tau_relax: float = 5.0):
+    def __init__(self, config: SimConfig, total_macro_steps: int, tau_relax: float = 5.0):
         self.config = config
         self.T_macro = total_macro_steps
         self.tau_relax = tau_relax

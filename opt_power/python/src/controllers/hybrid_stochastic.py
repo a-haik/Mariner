@@ -1,7 +1,7 @@
 # python/src/controllers/hybrid_stochastic.py
 import numpy as np
 from numba import njit
-from config import HybridSimConfig
+from config import SimConfig
 
 @njit(cache=True)
 def _lookup_hybrid_policy(t_k: int, pd_val: float, n_prev: int, soc_val: float,
@@ -42,7 +42,7 @@ class HybridStochasticControl:
     Online execution agent for the Multi-Timescale system.
     Queried in real-time by the Simulator at every macro-step.
     """
-    def __init__(self, config: HybridSimConfig, p_vals: np.ndarray, 
+    def __init__(self, config: SimConfig, p_vals: np.ndarray, 
                  policy_n: np.ndarray, policy_pfc: np.ndarray):
         self.config = config
         self.p_vals = p_vals

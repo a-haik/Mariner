@@ -1,8 +1,7 @@
 # python/src/simulator.py
 import numpy as np
-from config import HybridSimConfig
-from src.plants.hybrid_plant import FuelCellBatteryPlant
 from config import SimConfig
+from src.plants.hybrid_plant import FuelCellBatteryPlant
 
 class Simulator:
     """
@@ -61,7 +60,7 @@ class HybridSimulator:
     Dual-timescale execution engine.
     Orchestrates the macro-level Controller and the micro-level Plant physics.
     """
-    def __init__(self, config: HybridSimConfig, P_d_micro_profile: np.ndarray, plant: FuelCellBatteryPlant):
+    def __init__(self, config: SimConfig, P_d_micro_profile: np.ndarray, plant: FuelCellBatteryPlant):
         self.config = config
         self.P_d = P_d_micro_profile.flatten()
         self.plant = plant
@@ -106,16 +105,12 @@ class HybridSimulator:
             p_d_micro_window = self.P_d[micro_start_idx:micro_end_idx]
             
             # Calculate physical degradation and final SoC over the lambda window
-            macro_cost, soc_next = self.plant.calculate_macro_step(
+            macro_cost, c_o, c_s, soc_next = self.plant.calculate_macro_step(
                 soc_curr, n_k, n_prev, pfc_k, p_d_micro_window
             )
             
-            # Calculate individual cost components for plotting
-            c_o = (((pfc_k / self.config.p_star) - n_k) ** 2) / n_k * self.lambda_scale
-            c_s = self.config.k_s * abs(n_k - n_prev) if k > 0 else 0.0
-            c_bat = macro_cost - c_o - c_s
+            c_bat = macro_cost - c_o - c_s  # Now mathematically perfectly safe
             
-            # 4. Record Trajectories
             self.C_o_vec[k] = c_o
             self.C_s_vec[k] = c_s
             self.C_bat_vec[k] = c_bat
