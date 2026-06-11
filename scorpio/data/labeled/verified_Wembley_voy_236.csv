@@ -1,0 +1,2 @@
+Block_ID,Start_Time,End_Time,Duration_h,Mean_Speed_kn,Mean_Power_kW,Auto_Guessed_Mode,Human_Verified_Mode
+2.0,2026-01-23 16:25:00,2026-01-24 13:05:00,20.67,12.52,561.6,sea_transit,unknown

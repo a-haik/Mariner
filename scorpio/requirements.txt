@@ -5,6 +5,8 @@ numpy
 pandas
 scipy
 rainflow
+lxml
+openpyxl
 
 # Visualization & Mapping
 matplotlib
@@ -16,3 +18,7 @@ nbformat>=4.2.0
 # Interactive Environment (Jupyter)
 ipykernel
 ipython
+
+# Dataset labeling
+streamlit
+streamlit-folium

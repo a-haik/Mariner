@@ -4,6 +4,7 @@ import numpy as np
 import rainflow
 from typing import Dict, Any
 from src.config import PHYSICS
+from src.data_processing import engineer_telemetry_features
 
 class MissionProfiler:
     """Handles deterministic modes classification and profile blocks generation."""
@@ -55,6 +56,79 @@ class MissionProfiler:
             'Mean_Power_Fluctuation_Intensity': df_chunk['POWER_TV_ENERGY'].abs().mean(),
         }
         return metrics
+    
+    def pre_chunk_unlabeled_data(self, raw_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Slices raw data into voyage and port blocks using filtered speed,
+        but extracts summary statistics from the STRICTLY UNFILTERED data.
+        """
+        print("Applying filters to detect block boundaries...")
+        
+        # 1. Create a temporary filtered dataframe strictly for boundary detection
+        temp_filtered_df = engineer_telemetry_features(
+            raw_df.copy(), 
+            filter_method='butter'
+        )
+
+        # Handle column naming safely (assuming standard 'SPEED(knots)' or similar)
+        speed_col = next((c for c in raw_df.columns if 'SPEED' in c.upper()), 'SPEED')
+
+        # 2. Apply the config threshold to the FILTERED speed
+        is_sailing = temp_filtered_df[speed_col] > PHYSICS.SPEED_THRESHOLD_KNOTS
+
+        # 3. Create a block ID that increments every time 'is_sailing' changes state (True <-> False)
+        block_ids = is_sailing.ne(is_sailing.shift()).cumsum()
+
+        blocks_summary = []
+        print("Extracting raw statistics per block...")
+
+        # 4. Group the RAW dataframe using the boundaries found from the FILTERED dataframe
+        for block_id, raw_block_df in raw_df.groupby(block_ids):
+            
+            # Calculate duration in hours
+            duration_h = (raw_block_df.index.max() - raw_block_df.index.min()).total_seconds() / 3600.0
+
+            # Filter out micro-glitches (e.g., blocks lasting less than 30 minutes)
+            if duration_h < 0.5:
+                continue
+
+            mean_speed = raw_block_df[speed_col].mean()
+            mean_power = raw_block_df['AE_POWER(kW)'].mean()
+            
+            # Use standard deviation for power fluctuation proxy
+            power_std = raw_block_df['AE_POWER(kW)'].std() 
+
+            # 5. Heuristic Auto-Guessing (Based entirely on your provided table)
+            is_sea_block = mean_speed > PHYSICS.SPEED_THRESHOLD_KNOTS
+            guessed_mode = "unknown"
+
+            if not is_sea_block:
+                if mean_power > 750.0:
+                    guessed_mode = "port_unloading"
+                else:
+                    # 480kW vs 490kW is too close for an algorithm to safely guess
+                    guessed_mode = "port_idle_or_loading" 
+            else:
+                if mean_speed < 5.0:
+                    guessed_mode = "sea_loitering"
+                else:
+                    # Ballast vs Laden requires human verification via the app
+                    guessed_mode = "sea_transit" 
+
+            # 6. Store the block's raw footprint
+            blocks_summary.append({
+                'Block_ID': block_id,
+                'Start_Time': raw_block_df.index.min(),
+                'End_Time': raw_block_df.index.max(),
+                'Duration_h': round(duration_h, 2),
+                'Mean_Speed_kn': round(mean_speed, 2),
+                'Mean_Power_kW': round(mean_power, 1),
+                'Power_Fluctuation': round(power_std, 2),
+                'Auto_Guessed_Mode': guessed_mode,
+                'Human_Verified_Mode': ""  # Left blank for the Streamlit app
+            })
+
+        return pd.DataFrame(blocks_summary)
         
     def classify_modes(self, df: pd.DataFrame) -> pd.DataFrame:
         """Assigns physical operational modes using kinematic and manual log data."""
@@ -129,6 +203,58 @@ class MissionProfiler:
                         registry_entries.append(metrics)
                     
         return pd.DataFrame(registry_entries)
+    
+    def generate_review_blocks(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Generates blocks for the Streamlit App. 
+        If STATUS exists, it chunks by STATUS. If not, it uses the Speed heuristic.
+        """
+        speed_col = next((c for c in df.columns if 'SPEED' in c.upper()), 'SPEED')
+
+        if 'STATUS' in df.columns:
+            print("STATUS found. Generating review blocks from existing labels...")
+            # Chunk every time STATUS changes
+            block_ids = df['STATUS'].ne(df['STATUS'].shift()).cumsum()
+            auto_guesses = df.groupby(block_ids)['STATUS'].first()
+        else:
+            print("No STATUS found. Applying algorithmic pre-chunking...")
+            # Use the Butterworth filtered speed logic we discussed previously
+            from src.data_processing import engineer_telemetry_features
+            temp_df = engineer_telemetry_features(df.copy(), filter_method='butter')
+            is_sailing = temp_df[speed_col] > self.speed_threshold
+            block_ids = is_sailing.ne(is_sailing.shift()).cumsum()
+            auto_guesses = None # We will apply heuristics in the loop
+
+        blocks_summary = []
+        for block_id, raw_block_df in df.groupby(block_ids):
+            duration_h = (raw_block_df.index.max() - raw_block_df.index.min()).total_seconds() / 3600.0
+            if duration_h < 0.5:
+                continue # Ignore micro-glitches
+
+            mean_speed = raw_block_df[speed_col].mean()
+            mean_power = raw_block_df['AE_POWER(kW)'].mean()
+
+            # Apply heuristic ONLY if no status was provided
+            if auto_guesses is None:
+                if mean_speed > self.speed_threshold:
+                    guessed_mode = "sea_loitering" if mean_speed < 5.0 else "sea_transit"
+                else:
+                    guessed_mode = "port_unloading" if mean_power > 750.0 else "port_idle_or_loading"
+            else:
+                guessed_mode = auto_guesses.loc[block_id]
+
+            blocks_summary.append({
+                'Block_ID': block_id,
+                'Start_Time': raw_block_df.index.min(),
+                'End_Time': raw_block_df.index.max(),
+                'Duration_h': round(duration_h, 2),
+                'Mean_Speed_kn': round(mean_speed, 2),
+                'Mean_Power_kW': round(mean_power, 1),
+                'Auto_Guessed_Mode': guessed_mode,
+                'Human_Verified_Mode': "" 
+            })
+
+        return pd.DataFrame(blocks_summary)
 
     def extract_global_statistics(self, registry_df: pd.DataFrame) -> pd.DataFrame:
         """
