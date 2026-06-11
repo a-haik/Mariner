@@ -214,6 +214,169 @@ def plot_trajectory_folium(df: pd.DataFrame, status_col: str = 'STATUS', arrow_s
 # Aggregated (Blocks & Modes) Visualizations
 # ---------------------------------------------------------
 
+def plot_scenario_tradeoff_space(compiled_results: dict) -> go.Figure:
+    """
+    Plots all 1000h scenarios on a single canvas mapping Degradation Index vs H2 Mass Use.
+    """
+    fig = go.Figure()
+    
+    color_map = {
+        'Baseline': '#55A868',
+        'Shore_Power': '#2653CC',
+        'PEMFC_Off_Port': '#D65F5F',
+        'Long_Trips': '#DD8452'
+    }
+    
+    for scenario_name, data in compiled_results.items():
+        color = color_map.get(scenario_name, '#333333')
+        
+        # --- 1. Plot the Standard Variant Pair Component ---
+        std = data['Standard']
+        x_mid_std = (std['H2_Consumed_Lower_kg'] + std['H2_Consumed_Upper_kg']) / 2.0
+        err_std = std['H2_Consumed_Upper_kg'] - x_mid_std
+        std_power_fluc = std.get('Mean_Power_Fluctuation_Intensity', std.get('Power_Fluctuation_Intensity', 0.0))
+        
+        fig.add_trace(go.Scatter(
+            x=[x_mid_std],
+            y=[std['Accumulated_Fatigue']],
+            mode='markers+text',
+            name=f"{scenario_name} (Standard)",
+            text=[scenario_name],
+            textposition="top center",
+            marker=dict(size=14, color=color, symbol='circle', line=dict(width=1.5, color='black')),
+            error_x=dict(type='data', array=[err_std], color='rgba(80,80,80,0.4)', thickness=2, width=6),
+            hoverinfo='text',
+            hovertext=(
+                f"<b>Scenario: {scenario_name} (Standard)</b><br>"
+                f"Fatigue Index: {std['Accumulated_Fatigue']:.4f}<br>"
+                f"H2 Mass Range: [{std['H2_Consumed_Lower_kg']:.1f} - {std['H2_Consumed_Upper_kg']:.1f}] kg<br>"
+                f"Power Fluctuation: {std_power_fluc:.2f} (kW²/s²)"
+            )
+        ))
+        
+        # --- 2. Plot the Low-Cost Variant Pair Component ---
+        lc = data['LowCost']
+        x_mid_lc = (lc['H2_Consumed_Lower_kg'] + lc['H2_Consumed_Upper_kg']) / 2.0
+        err_lc = lc['H2_Consumed_Upper_kg'] - x_mid_lc
+        lc_power_fluc = lc.get('Mean_Power_Fluctuation_Intensity', lc.get('Power_Fluctuation_Intensity', 0.0))
+        
+        fig.add_trace(go.Scatter(
+            x=[x_mid_lc],
+            y=[lc['Accumulated_Fatigue']],
+            mode='markers',
+            name=f"{scenario_name} (Low-Cost Bottom 25%)",
+            marker=dict(size=12, color=color, symbol='diamond', line=dict(width=1.5, color='black')),
+            error_x=dict(type='data', array=[err_lc], color='rgba(120,120,120,0.3)', thickness=1.5, width=4),
+            hoverinfo='text',
+            hovertext=(
+                f"<b>Scenario: {scenario_name} (Low-Cost Profile)</b><br>"
+                f"Fatigue Index: {lc['Accumulated_Fatigue']:.4f}<br>"
+                f"H2 Mass Range: [{lc['H2_Consumed_Lower_kg']:.1f} - {lc['H2_Consumed_Upper_kg']:.1f}] kg<br>"
+                f"Power Fluctuation: {lc_power_fluc:.2f} (kW²/s²)"
+            )
+        ))
+        
+    fig.update_layout(
+        title="MARINER Scenario Tradeoff Optimization Workspace",
+        xaxis_title="Expected Total H2 Consumption Over 1000 Hours (kg) [Uncertainty Span η ∈ [0.45, 0.55]]",
+        yaxis_title="Qualitative PEMFC Degradation Index (Rainflow Fatigue Accumulation)",
+        template="plotly_white",
+        width=1100,
+        height=700,
+        hovermode="closest"
+    )
+    
+    return fig
+
+
+def plot_mode_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate', print_summary: bool = False) -> go.Figure:
+    """
+    Plots aggregated expected values for global operational states.
+    """
+    if stats_df.empty:
+        raise ValueError("Statistics DataFrame is empty.")
+    
+    total_time = stats_df['Total_Logged_Hours'].sum()
+    
+    if print_summary:
+        print("\n--- Operational State Statistics Summary ---")
+        table_rows = []
+        for mode, row in stats_df.iterrows():
+            if mode == 'Unknown':
+                 continue
+            
+            time_frac = row['Total_Logged_Hours'] / total_time
+            h2_mid = (row['Mean_H2_Rate_Lower_kg_h'] + row['Mean_H2_Rate_Upper_kg_h']) / 2.0
+            speed = row.get('Mean_Ship_Speed', row.get('Mean_Speed_knots', row.get('SHIP SPEED(knots)', 0.0)))
+            avg_duration = row.get('Mean_Block_Duration_h', 0.0)
+            
+            table_rows.append({
+                'Mode': mode,
+                'Time Fraction (%)': round(time_frac * 100, 2),
+                'Avg Block Duration (h)': round(avg_duration, 1),
+                'Mean Power (kW)': round(row.get('Mean_Power_kW', 0.0), 1),
+                'Mean H2 Rate (kg/h)': round(h2_mid, 2),
+                'Fatigue Damage Rate (/h)': round(row.get('Relative_Fatigue_Activity_Rate', 0.0), 4),
+                'Power Fluctuation': round(row.get('Mean_Power_Fluctuation_Intensity', 0.0), 2),
+                'Mean Ship Speed (kn)': round(speed, 2),
+
+            })
+            
+        display_df = pd.DataFrame(table_rows)
+        print(display_df.to_string(index=False))
+        print("-" * 50 + "\n")
+        
+    fig = go.Figure()
+
+    for mode, row in stats_df.iterrows():
+        if mode == 'Unknown':
+             continue
+            
+        color = COLOR.status_colors.get(mode, '#333333')
+        time_fraction = row['Total_Logged_Hours'] / total_time
+        
+        # Bypass Plotly's bug with tiny list legends by providing an exact pixel scalar diameter
+        pixel_diameter = max(8, (time_fraction ** 0.5) * 50)
+        
+        h2_mid = (row['Mean_H2_Rate_Lower_kg_h'] + row['Mean_H2_Rate_Upper_kg_h']) / 2.0
+        err_val = row['Mean_H2_Rate_Upper_kg_h'] - h2_mid
+        speed = row.get('Mean_Ship_Speed', row.get('Mean_Speed_knots', row.get('SHIP SPEED(knots)', 0.0)))
+        avg_duration = row.get('Mean_Block_Duration_h', 0.0)
+
+        hover_text = (
+            f"<b>{mode}</b><br>"
+            f"Time Fraction: {time_fraction*100:.1f}% ({row['Total_Logged_Hours']:.1f} hrs)<br>"
+            f"Avg Block Duration: {avg_duration:.1f} hours<br>"
+            f"Mean Power: {row.get('Mean_Power_kW', 0.0):.1f} kW<br>"
+            f"Mean Ship Speed: {speed:.1f} knots<br>"
+            f"H2 Rate: [{row['Mean_H2_Rate_Lower_kg_h']:.2f} - {row['Mean_H2_Rate_Upper_kg_h']:.2f}] kg/h<br>"
+            f"Fatigue Damage Rate: {row.get('Relative_Fatigue_Activity_Rate', 0.0):.4f} (/h)<br>"
+            f"Power Fluctuation: {row.get('Mean_Power_Fluctuation_Intensity', 0.0):.2f} (kW³/h³)<br>"
+        )
+
+        fig.add_trace(go.Scatter(
+            x=[h2_mid], y=[row[y_axis_metric]], mode='markers', name=mode, hoverinfo='text', hovertext=[hover_text],
+            legendgroup="Modes", legendgrouptitle_text="Aggregated Regimes",
+            marker=dict(size=pixel_diameter, color=color, line=dict(width=1.5, color='DarkSlateGrey')),
+            error_x=dict(type='data', array=[err_val], arrayminus=[err_val], color='rgba(100,100,100,0.5)', thickness=2, width=5)
+        ))
+
+    for f in [0.05, 0.1]:
+        dummy_diameter = (f ** 0.5) * 50
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode='markers', name=f"{int(f*100)}% of Total Time", legendgroup="Size", legendgrouptitle_text="Time Fraction",
+            marker=dict(size=dummy_diameter, color='rgba(150,150,150,0.5)', line=dict(width=1, color='DarkSlateGrey'))
+        ))
+
+    fig.update_layout(
+        title="Global Mode Statistics: H2 Flow vs PEMFC Degradation",
+        xaxis_title=rf"Expected H2 Flow Rate (kg/h) [Error Bars: η ∈ [{PHYSICS.ETA_LOWER:.2f}, {PHYSICS.ETA_UPPER:.2f}]]",
+        yaxis_title=f"PEMFC Degradation Index: {y_axis_metric}",
+        template="plotly_white", hovermode='closest', width=1100, height=650
+    )
+    return fig
+
+
 def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate') -> go.Figure:
     """
     Constructs a scatter plot mapping physical blocks across fatigue and H2 flow space.
@@ -223,7 +386,9 @@ def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_F
         
     fig = go.Figure()
     max_duration = registry_df['Duration_h'].max()
-    sizeref_val = 2. * max_duration / (40.**2) 
+    
+    # We slightly drop the maximum diameter bounds from 40 to 25 so Plotly's legend doesn't clamp/clip larger bubbles
+    sizeref_val = 2. * max_duration / (25.**2) 
 
     for mode in registry_df['MODE'].unique():
         mode_df = registry_df[registry_df['MODE'] == mode]
@@ -258,7 +423,9 @@ def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_F
             error_x=dict(type='data', symmetric=True, array=err_val, color='rgba(120,120,120,0.35)', thickness=1.5, width=4)
         ))
         
-    legend_sizes_h = [round(registry_df['Duration_h'].quantile(0.1)), round(registry_df['Duration_h'].median()), round(max_duration)]
+    # We strictly enforce sizes at 10%, 50%, and 100% so we never overlap or show exactly identical sizes
+    # legend_sizes_h = [round(max_duration * 0.05, 1), round(max_duration * 0.25, 1), round(max_duration * 0.4, 1)]
+    legend_sizes_h = [5,10,15]
     for s in legend_sizes_h:
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode='markers', name=f"{s} hours", legendgroup="Size", legendgrouptitle_text="Block Duration",
@@ -271,136 +438,4 @@ def plot_block_space(registry_df: pd.DataFrame, y_axis_metric: str = 'Relative_F
         yaxis_title=f"PEMFC Degradation Index: {y_axis_metric}",
         template="plotly_white", hovermode='closest', width=1100, height=650
     )
-    return fig
-
-
-def plot_mode_statistics(stats_df: pd.DataFrame, y_axis_metric: str = 'Relative_Fatigue_Activity_Rate', print_table: bool = False) -> go.Figure:
-    """
-    Plots aggregated expected values for global operational states.
-    """
-    if stats_df.empty:
-        raise ValueError("Statistics DataFrame is empty.")
-    
-    if print_table:
-        print("\n--- Operational State Statistics Summary ---")
-        display_df = stats_df.copy()
-        if 'Mode' not in display_df.columns:
-            display_df = display_df.reset_index().rename(columns={'index': 'Mode'})
-        
-        print(display_df.to_string(index=False))
-        print("-" * 50 + "\n")
-        
-    total_time = stats_df['Total_Logged_Hours'].sum()
-    fig = go.Figure()
-    sizeref_val = 2. * max(stats_df['Total_Logged_Hours'] / total_time) / (50.**2)
-
-    for mode, row in stats_df.iterrows():
-        if mode == 'Unknown':
-             continue
-            
-        color = COLOR.status_colors.get(mode, '#333333')
-        time_fraction = row['Total_Logged_Hours'] / total_time
-        h2_mid = (row['Mean_H2_Rate_Lower_kg_h'] + row['Mean_H2_Rate_Upper_kg_h']) / 2.0
-        err_val = row['Mean_H2_Rate_Upper_kg_h'] - h2_mid
-
-        hover_text = (
-            f"<b>{mode}</b><br>"
-            f"Time Fraction: {time_fraction*100:.1f}% ({row['Total_Logged_Hours']:.1f} hrs)<br>"
-            f"Mean Power: {row['Mean_Power_kW']:.1f} kW<br>"
-            f"H2 Rate: [{row['Mean_H2_Rate_Lower_kg_h']:.2f} - {row['Mean_H2_Rate_Upper_kg_h']:.2f}] kg/h<br>"
-            f"Fatigue Damage Rate: {row['Relative_Fatigue_Activity_Rate']:.4f} (/h)<br>"
-            f"Power Fluctuation: {row['Mean_Power_Fluctuation_Intensity']:.2f} (kW^3/h^3)<br>"
-        )
-
-        fig.add_trace(go.Scatter(
-            x=[h2_mid], y=[row[y_axis_metric]], mode='markers', name=mode, hoverinfo='text', hovertext=[hover_text],
-            legendgroup="Modes", legendgrouptitle_text="Aggregated Regimes",
-            marker=dict(size=[time_fraction], sizemode='area', sizeref=sizeref_val, sizemin=10, color=color, line=dict(width=1.5, color='DarkSlateGrey')),
-            error_x=dict(type='data', array=[err_val], arrayminus=[err_val], color='rgba(100,100,100,0.5)', thickness=2, width=5)
-        ))
-
-    for f in [0.1, 0.5, 1.0]:
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode='markers', name=f"{int(f*100)}% of Total Time", legendgroup="Size", legendgrouptitle_text="Time Fraction",
-            marker=dict(size=[f], sizemode='area', sizeref=sizeref_val, color='rgba(150,150,150,0.5)', line=dict(width=1, color='DarkSlateGrey'))
-        ))
-
-    fig.update_layout(
-        title="Global Mode Statistics: H2 Flow vs PEMFC Degradation",
-        xaxis_title=rf"Expected H2 Flow Rate (kg/h) [Error Bars: η ∈ [{PHYSICS.ETA_LOWER:.2f}, {PHYSICS.ETA_UPPER:.2f}]]",
-        yaxis_title=f"PEMFC Degradation Index: {y_axis_metric}",
-        template="plotly_white", hovermode='closest', width=1100, height=650
-    )
-    return fig
-
-
-def plot_scenario_tradeoff_space(compiled_results: dict) -> go.Figure:
-    """
-    Plots all 1000h scenarios on a single canvas mapping Degradation Index vs H2 Mass Use.
-    """
-    fig = go.Figure()
-    
-    color_map = {
-        'Baseline': '#55A868',
-        'Shore_Power': '#2653CC',
-        'PEMFC_Off_Port': '#D65F5F',
-        'Long_Trips': '#DD8452'
-    }
-    
-    for scenario_name, data in compiled_results.items():
-        color = color_map.get(scenario_name, '#333333')
-        
-        # --- 1. Plot the Standard Variant Pair Component ---
-        std = data['Standard']
-        x_mid_std = (std['H2_Consumed_Lower_kg'] + std['H2_Consumed_Upper_kg']) / 2.0
-        err_std = std['H2_Consumed_Upper_kg'] - x_mid_std
-        
-        fig.add_trace(go.Scatter(
-            x=[x_mid_std],
-            y=[std['Accumulated_Fatigue']],
-            mode='markers+text',
-            name=f"{scenario_name} (Standard)",
-            text=[scenario_name],
-            textposition="top center",
-            marker=dict(size=14, color=color, symbol='circle', line=dict(width=1.5, color='black')),
-            error_x=dict(type='data', array=[err_std], color='rgba(80,80,80,0.4)', thickness=2, width=6),
-            hoverinfo='text',
-            hovertext=(
-                f"<b>Scenario: {scenario_name} (Standard)</b><br>"
-                f"Fatigue Index: {std['Accumulated_Fatigue']:.4f}<br>"
-                f"H2 Mass Range: [{std['H2_Consumed_Lower_kg']:.1f} - {std['H2_Consumed_Upper_kg']:.1f}] kg<br>"
-                f"Energy Output: {std['Expected_Energy_kWh']:.1f} kWh"
-            )
-        ))
-        
-        # --- 2. Plot the Low-Cost Variant Pair Component ---
-        lc = data['LowCost']
-        x_mid_lc = (lc['H2_Consumed_Lower_kg'] + lc['H2_Consumed_Upper_kg']) / 2.0
-        err_lc = lc['H2_Consumed_Upper_kg'] - x_mid_lc
-        
-        fig.add_trace(go.Scatter(
-            x=[x_mid_lc],
-            y=[lc['Accumulated_Fatigue']],
-            mode='markers',
-            name=f"{scenario_name} (Low-Cost Bottom 25%)",
-            marker=dict(size=12, color=color, symbol='diamond', line=dict(width=1.5, color='black')),
-            error_x=dict(type='data', array=[err_lc], color='rgba(120,120,120,0.3)', thickness=1.5, width=4),
-            hoverinfo='text',
-            hovertext=(
-                f"<b>Scenario: {scenario_name} (Low-Cost Profile)</b><br>"
-                f"Fatigue Index: {lc['Accumulated_Fatigue']:.4f}<br>"
-                f"H2 Mass Range: [{lc['H2_Consumed_Lower_kg']:.1f} - {lc['H2_Consumed_Upper_kg']:.1f}] kg"
-            )
-        ))
-        
-    fig.update_layout(
-        title="MARINER Scenario Tradeoff Optimization Workspace",
-        xaxis_title="Expected Total H2 Consumption Over 1000 Hours (kg) [Uncertainty Span η ∈ [0.45, 0.55]]",
-        yaxis_title="Qualitative PEMFC Degradation Index (Rainflow Fatigue Accumulation)",
-        template="plotly_white",
-        width=1100,
-        height=700,
-        hovermode="closest"
-    )
-    
     return fig

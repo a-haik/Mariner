@@ -39,12 +39,16 @@ class MissionProfiler:
         duration = len(df_chunk) * self.dt_hours
         mean_power = df_chunk['AE_POWER(kW)'].mean()
         
+        # Safely extract the mean speed for this specific block
+        mean_speed = df_chunk['SHIP SPEED(knots)'].mean() if 'SHIP SPEED(knots)' in df_chunk.columns else 0.0
+        
         metrics = {
             'Source_File': source_file,
             'Start_Time': df_chunk.index.min().strftime('%Y-%m-%d %H:%M'),
             'Duration_h': duration,
             'Energy_kWh': mean_power * duration,
             'Mean_Power_kW': mean_power,
+            'Mean_Ship_Speed': mean_speed, # <--- Added this line
             'H2_Rate_Lower_kg_h': mean_power / (PHYSICS.ETA_UPPER * PHYSICS.LHV_H2_KWH_KG),
             'H2_Rate_Upper_kg_h': mean_power / (PHYSICS.ETA_LOWER * PHYSICS.LHV_H2_KWH_KG),
             'Relative_Fatigue_Activity_Rate': self._compute_normalized_rainflow(df_chunk['AE_POWER(kW)'], duration),
@@ -145,6 +149,13 @@ class MissionProfiler:
             def weighted_mean(col):
                 return (group[col] * group['Duration_h']).sum() / total_hours
 
+            # Use a defensive fallback check in case a block column variation slips through
+            speed_col = None
+            for possible_col in ['Mean_Ship_Speed', 'Mean_Speed_knots', 'SHIP SPEED(knots)']:
+                if possible_col in group.columns:
+                    speed_col = possible_col
+                    break
+
             stats.append({
                 'MODE': mode,
                 'Mean_Power_kW': weighted_mean('Mean_Power_kW'),
@@ -152,9 +163,11 @@ class MissionProfiler:
                 'Mean_H2_Rate_Upper_kg_h': weighted_mean('H2_Rate_Upper_kg_h'),
                 'Mean_Power_Fluctuation_Intensity': weighted_mean('Mean_Power_Fluctuation_Intensity'),
                 'Relative_Fatigue_Activity_Rate': weighted_mean('Relative_Fatigue_Activity_Rate'),
+                'Mean_Ship_Speed': weighted_mean(speed_col) if speed_col else 0.0,
                 'Number_of_Blocks': len(group),
                 'Total_Logged_Hours': total_hours,
-                'Time_Fraction': total_hours / total_registry_duration if total_registry_duration > 0 else 0
+                'Time_Fraction': total_hours / total_registry_duration if total_registry_duration > 0 else 0,
+                'Mean_Block_Duration_h': group['Duration_h'].mean()  # <--- Added arithmetic mean of block durations
             })
             
         return pd.DataFrame(stats).set_index('MODE')
@@ -191,14 +204,22 @@ class ScenarioManager:
             t_hours = group['Duration_h'].sum()
             def weighted_mean(col):
                 return (group[col] * group['Duration_h']).sum() / t_hours
-                
+            
+            # Defensive speed column check identical to your global stats method
+            speed_col = None
+            for possible_col in ['Mean_Ship_Speed', 'Mean_Speed_knots', 'SHIP SPEED(knots)']:
+                if possible_col in group.columns:
+                    speed_col = possible_col
+                    break
+                    
             stats_list.append({
                 'MODE': mode,
                 'Mean_Power_kW': weighted_mean('Mean_Power_kW'),
                 'Mean_H2_Rate_Lower_kg_h': weighted_mean('H2_Rate_Lower_kg_h'),
                 'Mean_H2_Rate_Upper_kg_h': weighted_mean('H2_Rate_Upper_kg_h'),
                 'Relative_Fatigue_Activity_Rate': weighted_mean('Relative_Fatigue_Activity_Rate'),
-                'Mean_Power_Fluctuation_Intensity': weighted_mean('Mean_Power_Fluctuation_Intensity')
+                'Mean_Power_Fluctuation_Intensity': weighted_mean('Mean_Power_Fluctuation_Intensity'),
+                'Mean_Ship_Speed': weighted_mean(speed_col) if speed_col else 0.0 # <--- Added this line
             })
         return pd.DataFrame(stats_list).set_index('MODE')
 

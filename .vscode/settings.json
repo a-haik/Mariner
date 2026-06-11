@@ -4,3 +4,7 @@
         "file:/**/*.csv": "jupyter-data-wrangler"
     }
 }
+
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+}
