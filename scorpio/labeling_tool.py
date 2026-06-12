@@ -99,17 +99,32 @@ with nav_col2:
         st.rerun()
 with nav_col3:
     if st.button("🚀 Finalize & Generate Processed Data", use_container_width=True, type="primary"):
-        with st.spinner("Broadcasting labels to 5-minute telemetry..."):
+        with st.spinner("Broadcasting labels and generating global plot (this may take a few seconds)..."):
             final_df = interim_df.copy()
-
+            
+            # Start with empty values instead of 'unknown'
             final_df['STATUS'] = pd.NA 
+            
             for _, block in blocks_df.iterrows():
                 final_df.loc[block['Start_Time']:block['End_Time'], 'STATUS'] = block['Human_Verified_Mode']
+            
+            # Auto-patch dropped edge ticks
             final_df['STATUS'] = final_df['STATUS'].bfill().ffill()
-
+            
             final_df.to_csv(processed_dir / selected_file)
-            st.success(f"✅ Dataset saved to: data/processed/{selected_file}")
-            st.stop()
+            
+        st.success(f"✅ Dataset saved to: data/processed/{selected_file}")
+        st.balloons()
+        
+        # --- NEW VISUALIZATION FEATURE ---
+        st.markdown("### 🏆 Final Verified Telemetry Profile")
+        st.info("Plotting your entire voyage dataset with verified operational modes...")
+        
+        # Call your existing plot_series function on the completed dataset
+        fig, axes = plot_series(final_df, ['SPEED(knots)', 'AE_POWER(kW)'], subplots=True, status_col='STATUS')
+        st.pyplot(fig)
+        
+        st.stop()
 
 # --- ADVANCED BLOCK EDITOR ---
 with st.expander("🛠️ Advanced Block Editing (Split & Merge)"):
