@@ -143,10 +143,23 @@ def plot_series(df: pd.DataFrame,
         
     return fig, axes
 
-
-def plot_trajectory_folium(df: pd.DataFrame, status_col: str = 'STATUS', arrow_step: int = 10, arrow_size: float = 0.002) -> folium.Map:
+def plot_trajectory_folium(df: pd.DataFrame, 
+                           status_col: str = 'STATUS', 
+                           arrow_step: int = 10, 
+                           arrow_size: float = 0.002,
+                           plot_as_points: bool = False) -> folium.Map:
     """
     Plots the vessel trajectory on an interactive Folium map, highlighting port events.
+    
+    Args:
+        df: The telemetry DataFrame containing LATITUDE(DD) and LONGITUDE(DD).
+        status_col: Column name containing operational status for highlighting.
+        arrow_step: Number of data points between directional arrows (used if plot_as_points=False).
+        arrow_size: Size scaling for the arrows.
+        plot_as_points: If True, plots discrete dots instead of a continuous line. Ideal for sparse GPS data.
+        
+    Returns:
+        folium.Map: The interactive map object.
     """
     if df is None or 'LATITUDE(DD)' not in df.columns:
         raise ValueError("Coordinates not processed.")
@@ -168,21 +181,39 @@ def plot_trajectory_folium(df: pd.DataFrame, status_col: str = 'STATUS', arrow_s
     center_coord = [geo_data['LATITUDE(DD)'].median(), geo_data['LONGITUDE(DD)'].median()]
     vessel_map = folium.Map(location=center_coord, zoom_start=6, tiles='CartoDB positron')
 
-    folium.ColorLine(positions=coords, colors=time_proxy, colormap=colormap, weight=4, opacity=0.7).add_to(vessel_map)
+    # --- TRAJECTORY PLOTTING LOGIC ---
+    if plot_as_points:
+        # Scatter plot for jumpy/sparse GPS data
+        for i, (idx, row) in enumerate(geo_data.iterrows()):
+            color = colormap(time_proxy[i])
+            folium.CircleMarker(
+                location=[row['LATITUDE(DD)'], row['LONGITUDE(DD)']],
+                radius=3, # Adjust dot size here
+                color=color,
+                fill=True,
+                fill_color=color,
+                fill_opacity=0.9,
+                weight=0.5,
+                popup=f"Time: {idx.strftime('%d/%m/%Y %H:%M')}"
+            ).add_to(vessel_map)
+    else:
+        # Continuous line and arrows for high-frequency GPS data
+        folium.ColorLine(positions=coords, colors=time_proxy, colormap=colormap, weight=4, opacity=0.7).add_to(vessel_map)
 
-    for i in range(0, len(geo_data) - 1, arrow_step):
-        p1, p2 = geo_data.iloc[i], geo_data.iloc[i+1]
-        bearing = _calculate_bearing(p1['LATITUDE(DD)'], p1['LONGITUDE(DD)'], p2['LATITUDE(DD)'], p2['LONGITUDE(DD)'])
-        arrow_verts = _get_arrow_vertices(p1['LATITUDE(DD)'], p1['LONGITUDE(DD)'], bearing, size=arrow_size)
-        
-        folium.Polygon(
-            locations=arrow_verts, color=colormap(time_proxy[i]), fill=True,
-            fill_color=colormap(time_proxy[i]), fill_opacity=0.9, weight=1,
-            popup=f"Time: {geo_data.index[i].strftime('%H:%M')}"
-        ).add_to(vessel_map)
+        for i in range(0, len(geo_data) - 1, arrow_step):
+            p1, p2 = geo_data.iloc[i], geo_data.iloc[i+1]
+            bearing = _calculate_bearing(p1['LATITUDE(DD)'], p1['LONGITUDE(DD)'], p2['LATITUDE(DD)'], p2['LONGITUDE(DD)'])
+            arrow_verts = _get_arrow_vertices(p1['LATITUDE(DD)'], p1['LONGITUDE(DD)'], bearing, size=arrow_size)
+            
+            folium.Polygon(
+                locations=arrow_verts, color=colormap(time_proxy[i]), fill=True,
+                fill_color=colormap(time_proxy[i]), fill_opacity=0.9, weight=1,
+                popup=f"Time: {geo_data.index[i].strftime('%H:%M')}"
+            ).add_to(vessel_map)
     
     colormap.add_to(vessel_map)
 
+    # --- PORT EVENTS HIGHLIGHTING ---
     if status_col in geo_data.columns:
         port_states = ['idle', 'loading', 'discharging', 'unloading', 'port_idle', 'port_loading', 'port_unloading']
         is_at_port = geo_data[status_col].astype(str).str.lower().isin(port_states)

@@ -1,2 +1,0 @@
-Block_ID,Start_Time,End_Time,Duration_h,Mean_Speed_kn,Mean_Power_kW,Auto_Guessed_Mode,Human_Verified_Mode
-5.0,2026-01-07 21:45:00,2026-01-09 10:25:00,36.67,0.07,577.9,port_idle_or_loading,sea_loitering

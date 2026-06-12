@@ -254,7 +254,11 @@ class MissionProfiler:
                 'Human_Verified_Mode': "" 
             })
 
-        return pd.DataFrame(blocks_summary)
+        final_blocks_df = pd.DataFrame(blocks_summary)
+        if not final_blocks_df.empty:
+            final_blocks_df['Block_ID'] = range(1, len(final_blocks_df) + 1)
+            
+        return final_blocks_df
 
     def extract_global_statistics(self, registry_df: pd.DataFrame) -> pd.DataFrame:
         """
