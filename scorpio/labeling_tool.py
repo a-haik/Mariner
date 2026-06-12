@@ -114,10 +114,8 @@ with nav_col3:
             final_df.to_csv(processed_dir / selected_file)
             
         st.success(f"✅ Dataset saved to: data/processed/{selected_file}")
-        st.balloons()
         
-        # --- NEW VISUALIZATION FEATURE ---
-        st.markdown("### 🏆 Final Verified Telemetry Profile")
+        st.markdown("### Final Telemetry Profile")
         st.info("Plotting your entire voyage dataset with verified operational modes...")
         
         # Call your existing plot_series function on the completed dataset
