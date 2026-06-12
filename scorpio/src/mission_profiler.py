@@ -228,8 +228,6 @@ class MissionProfiler:
         blocks_summary = []
         for block_id, raw_block_df in df.groupby(block_ids):
             duration_h = (raw_block_df.index.max() - raw_block_df.index.min()).total_seconds() / 3600.0
-            if duration_h < 0.5:
-                continue # Ignore micro-glitches
 
             mean_speed = raw_block_df[speed_col].mean()
             mean_power = raw_block_df['AE_POWER(kW)'].mean()

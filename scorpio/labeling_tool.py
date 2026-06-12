@@ -101,9 +101,12 @@ with nav_col3:
     if st.button("🚀 Finalize & Generate Processed Data", use_container_width=True, type="primary"):
         with st.spinner("Broadcasting labels to 5-minute telemetry..."):
             final_df = interim_df.copy()
-            final_df['STATUS'] = 'unknown' 
+
+            final_df['STATUS'] = pd.NA 
             for _, block in blocks_df.iterrows():
                 final_df.loc[block['Start_Time']:block['End_Time'], 'STATUS'] = block['Human_Verified_Mode']
+            final_df['STATUS'] = final_df['STATUS'].bfill().ffill()
+
             final_df.to_csv(processed_dir / selected_file)
             st.success(f"✅ Dataset saved to: data/processed/{selected_file}")
             st.stop()

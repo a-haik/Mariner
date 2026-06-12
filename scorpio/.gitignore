@@ -13,7 +13,7 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Data Files
-data/raw/*
+data/*
 
 # References & Local Docs
 .docs/
