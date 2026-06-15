@@ -1,125 +1,129 @@
-# MARINER: Data-Driven Operational Profiling & Scenario Engineering
+# Comprehensive Technical Synthesis: KIARA Synthetic Telemetry Engine
 
-## 1. Project Overview
-The European MARINER project aims to validate and demonstrate a reliable, efficient, scalable, and low-cost 1 MW PEM Fuel Cell (PEMFC) system for maritime applications. Operating within Work Package 9 (Scale-Up & End-user Engagement), this codebase acts as the analytical bridge between historical vessel telemetry and the physical testing phase. 
+## 1. Executive Summary & Architectural Paradigm
+The KIARA Synthetic Telemetry Engine serves as a high-fidelity digital twin framework developed for the European MARINER project. Its objective is to close the gap between macroscopic historical routing models and high-frequency microscopic power system physical behaviors for the *KIARA* high-speed catamaran ferry fleet operating in the Cyclades region of the Aegean Sea. 
 
-By ingesting real-world operational data from the SCORPIO Handymax tankers, this framework profiles temporal load demands. The objective is to predict hydrogen ($H_2$) consumption bounds and quantify structural fatigue across various 1000-hour testing scenarios, allowing engineers to optimize the 2028 demonstration protocols against strict fuel budgets and hardware constraints.
-
----
-
-## 2. Scientific Foundation & Methodological Framework
-
-The analytical pipeline is built upon deterministic physical modeling rather than stochastic or black-box machine learning approaches. This ensures that every computed metric—from required battery capacity to membrane degradation—maintains strict conservation of energy and remains interpretable for hardware sizing.
-
-### 2.1 Telemetry Regularization & Spatial-Temporal Synchronization
-Raw vessel telemetry suffers from inconsistent sampling rates, missing entries, and manual log lagging. The `VesselDataLoader` class normalizes this by forcing the raw CSV data onto a strictly monotonic 5-minute time grid (`pd.Series.resample`). 
-To preserve the physical continuity of the vessel's kinematics, linear variables (like power and speed) are interpolated linearly over time, while circular variables (like heading) are decomposed into trigonometric components:
-$$H_{sin} = \sin(H_{raw}), \quad H_{cos} = \cos(H_{raw})$$
-These components are averaged and reconstructed using `numpy.arctan2` to prevent artificial wraparound errors during aggregation.
-
-### 2.2 Hybrid Energy Management & Battery Buffer Optimization
-To protect the fuel cell stack from severe transient loads, the system simulates a charge-sustaining Hybrid Energy Management System (EMS). In `data_processing.py`, this is achieved by passing the raw electrical demand ($P_{AE}$) through a zero-phase digital Butterworth low-pass filter via `scipy.signal.filtfilt`. 
-
-This effectively splits the power delivery: the fuel cell handles the low-frequency baseload ($P_{FC}$), while a theoretical battery pack absorbs the high-frequency transients. The instantaneous battery power demand is defined as:
-$$P_{batt}(t) = P_{AE}(t) - P_{FC}(t)$$
-By varying the filter's cutoff frequency ($f_c$), we alter the hardware trade-off space. To deduce the actual required battery capacity for a given voyage block, the algorithm centers the battery power and integrates it over time to find the maximum energy capacity excursion:
-$$\Delta E_{batt} = \max \left( \int \left( P_{batt}(t) - \bar{P}_{batt} \right) dt \right) - \min \left( \int \left( P_{batt}(t) - \bar{P}_{batt} \right) dt \right)$$
-The final installed capacity estimates assume a safe operational Depth of Discharge (DoD) envelope of 60%.
-
-### 2.3 PEMFC Degradation & Rainflow Fatigue Accumulation
-To evaluate the relative wear on the PEMFC membrane caused by dynamic load cycling, the `MissionProfiler` adapts structural mechanics principles to electrochemistry. Using the `rainflow` Python library, the algorithm extracts closed hysteresis loops from the time-series power demand of each operational block.
-
-We apply the Palmgren-Miner linear damage rule to calculate a time-normalized, dimensionless Fatigue Activity Rate ($D$) per hour:
-$$D = \frac{1}{T_{block}} \sum_{i} n_i \left( \frac{\Delta P_i}{P_{base}} \right)^k$$
-Where $n_i$ is the cycle count at amplitude $\Delta P_i$. To ensure the metric scales correctly to the MARINER architecture, the amplitude is normalized against a $P_{base} = 200 \text{ kW}$ modular building block. The exponent $k=2.0$ acts as an intensive penalty, disproportionately weighting deep, high-amplitude power swings over minor high-frequency noise.
-
-### 2.4 Thermodynamic Efficiency & Hydrogen Mass Flow
-Predicting hydrogen mass requirements is bounded by the thermodynamic efficiency of the fuel cell stack ($\eta$), which decays over its lifecycle. The instantaneous hydrogen mass flow rate is derived directly from the filtered fuel cell demand:
-$$\dot{m}_{H_2}(t) = \frac{P_{FC}(t)}{\eta \cdot LHV_{H_2}}$$
-Given the Lower Heating Value ($LHV_{H_2} = 33.32 \text{ kWh/kg}$), the pipeline computes all final scenario metrics deterministically across an uncertainty envelope spanning from an optimal beginning-of-life state ($\eta_{upper} = 0.55$) to a degraded end-of-life state ($\eta_{lower} = 0.45$).
+Architecturally, the model utilizes a **decoupled multi-scale state-space formulation**. It segregates macroscopic timetable routing logistics (the State Machine Layer) and environmental generation (the Orchestrator) from high-frequency aerodynamic, hydrodynamic, mechanical, and electrical transient interactions (the Physical Core Layer). By grounding parameters within the statistical invariants of a 30-year Copernicus/ERA5 climatological database, the simulator moves away from heuristic assumptions, anchoring its thresholds, inertia, and variance scaling in verifiable physics.
 
 ---
 
-## 3. Architecture & Data Pipeline
+## 2. Macroscopic Layer: State Machine & Timetable Logistics
+The macroscopic topology tracks the spatial coordinates of the vessel across specific network legs ($i$) defined by a schedule matrix $\mathcal{S}$. At any continuous time $t$, the macro-state of the vessel is categorized into one of four discrete operational regimes:
+$$\text{Regime}(t) \in \{\text{Transit}, \, \text{Maneuvering}, \, \text{Port Operations}, \, \text{Idling}\}$$
 
-The repository is structured as a functional, unidirectional data pipeline. It decouples raw I/O, signal processing, and mathematical aggregation to ensure reproducibility across different vessel datasets.
+* **Transit:** Open sea voyage between ports.
+* **Maneuvering:** Navigating the immediate harbor perimeter and aligning with the berth.
+* **Port Operations:** Active vehicle/passenger loading, unloading, and short midday turnarounds (e.g., Rafina 65-minute break) where hotel, thruster systems, and main engines remain fully responsive.
+* **Idling:** Long-term mooring (e.g., Naxos overnight) where main engines are cold-ironed and auxiliary systems drop to a static baseline.
 
-### 3.1 Pipeline Execution Flow
-1. **`src/data_loader.py` (Ingestion & Regularization):** - **Input:** Raw, asynchronously sampled vessel telemetry (CSVs).
-   - **Process:** Deduplicates timestamps, maps ASCII coordinate encodings to Decimal Degrees (DD), and enforces a strict, monotonic 5-minute time grid using linear and circular interpolation.
-   - **Output:** A mathematically continuous Pandas DataFrame suitable for signal processing.
+### Scheduling, Subtractive Constraints & Stochastic Delays
+To preserve the rigid berth-to-berth timetable limits of real-world ferry operations, the open-sea transit block is calculated as a **Subtractive Net Residual**. The time spent maneuvering out of the departure port and into the arrival port is deducted from the scheduled leg duration:
 
-2. **`src/data_processing.py` (EMS Simulation & Feature Engineering):**
-   - **Input:** The regularized telemetry grid.
-   - **Process:** Computes kinematic derivatives (e.g., Rate of Turn) and electrical stress proxies (e.g., Power Volatility, Voltage Stress via Power Factor). Crucially, it applies the zero-phase Butterworth filter to simulate the hardware EMS and isolate the battery buffer requirements.
-   - **Output:** A dynamically bounded DataFrame containing both raw kinematics and filtered, stack-safe power demands.
+$$\Delta T_{\text{actual,maneuver}} = \Delta T_{\text{avg,maneuver}} + \xi_{\text{delay}}(W_{\text{eff}})$$
+$$\Delta T_{\text{actual,transit}} = \max\Big(2.0, \, \Delta T_{\text{Schedule,Transit}} - 2 \cdot \Delta T_{\text{avg,maneuver}}\Big) + \xi_{\text{delay}}(W_{\text{eff}})$$
 
-3. **`src/mission_profiler.py` (Fatigue & Scenario Aggregation):**
-   - **Input:** The filtered telemetry.
-   - **Process:** Identifies continuous voyage blocks (`stay_id`) and classifies them into deterministic modes (e.g., `sea_transit_laden`, `port_loading`). It executes the Rainflow fatigue counting and integrates total $H_2$ consumption per block.
-   - **Output:** A structured `Block Registry` (individual voyage phases) and a `Global Statistics` matrix (duration-weighted averages per mode).
-
-4. **`src/visualizer.py` (Spatial & Trade-off Rendering):**
-   - **Process:** Generates interactive Folium maps to audit spatial-temporal port transitions, and Plotly matrices to visualize the complex trade-off space between hydrogen consumption and cumulative membrane fatigue.
+The stochastic delay component $\xi_{\text{delay}}$ is governed by a boolean bypass flag ($b_{\text{delays}}$) and scales with extreme weather conditions (applying $\mu_{\text{penalty}}$ when $W_{\text{eff}} > 0.4$).
 
 ---
 
-## 4. 1000-Hour Scenario Generation
+## 3. Environmental Framework: Multi-Scale Meteorology (The Orchestrator)
+The environment is modeled as a continuous hazard index $W(t) \in [0.0, 1.0]$, independently generated by the Orchestrator layer prior to power calculation. 
 
-Because the 2028 demonstration phase operates under a strictly capped hydrogen budget, the `ScenarioManager` (within `mission_profiler.py`) dynamically recompiles the historical `Block Registry` into four distinct 1000-hour testing profiles. 
+#### A. Meso-Scale Climatology (Hourly Resolution)
+The global wind field is driven by a bounded **Jacobi Stochastic Differential Equation (SDE)**:
+$$dW_g = \theta_j (\mu_j - W_g)dt + \sigma_j \sqrt{W_g (1 - W_g)} dB_t$$
 
-Each scenario is evaluated against a **Standard** (average historical distribution) and a **Low-Cost** (bottom 25% optimized fuel flow) subset to expose OPEX vs. CAPEX degradation trade-offs.
-
-### 4.1 The Four MARINER Profiles
-1. **Historical Baseline:** A direct, proportional scaling of the vessel's empirical mode distribution to a 1000-hour window.
-2. **Cold-Ironing Integration (Shore Power):** Replaces all heavy port loading/unloading demands with minimal baseline hotel loads, simulating a harbor grid connection. 
-3. **Docked Shutdown (PEMFC-Off):** Simulates a complete, cold shutdown of the fuel cell stack during all port operations. The saved hours are re-normalized across active sea transit modes.
-4. **Extended Transit Optimization:** Leverages a **Proportional Ratio Approach** to isolate long-haul logistics.
-   - *The Math:* It filters the registry for transit blocks exceeding the historical median duration. It then computes a historical port-to-transit ratio ($\gamma = \frac{\sum T_{port}}{\sum T_{transit}}$) and applies this scalar to the long-haul hours to synthetically generate realistic, dependent port-handling times, preserving global shipping semantics.
+#### B. Multi-Scale Turbulent Gusts (Second Resolution)
+To simulate localized atmospheric micro-climates and sharp aerodynamic shifts, two exact Ornstein-Uhlenbeck processes (slow and fast) are superimposed on the Jacobi baseline. The diffusion coefficients are mathematically scaled ($\sigma_{\text{SDE}} = \sigma_{\infty} \sqrt{2\theta}$) to guarantee the resulting wind field strictly respects the steady-state standard deviation dictated by the user's turbulence parameter ($\phi_{\text{gust,turb}}$):
+$$W_{\text{eff}}(t) = \text{clip}\Big( (W_g(t) \cdot K_i) + G_{\text{slow}}(t) + G_{\text{fast}}(t), \, 0.0, \, 1.0 \Big)$$
 
 ---
 
-## 5. Hardware Constraints & Project Assumptions
+## 4. Microscopic Physical Core Layer: Coupled Scaling Laws
 
-The pipeline enforces several immutable physical boundaries derived directly from the MARINER proposal (Part B) and hardware specifications:
+### 1. Statistical Operational Boundaries
+The system derives its operational triggers straight from long-term statistical invariants:
+* **Clean-Hull Reference Anchor ($W_{\text{baseline}}$)**: Fixed to historical yearly average $\mu_{\text{annual}}$.
+* **Thruster Activation Cut-In ($W_{\text{cut,in}}$)**: Set at $1.0$ standard deviation above the annual norm ($\approx \text{Beaufort } 5$).
+* **System Maximum Saturation Limit ($W_{\text{saturation}}$)**: Set at $2.0$ standard deviations above the annual norm ($\approx \text{Beaufort } 7$).
 
-* **Absolute Power Envelope:** The PEMFC stack is strictly capped at a **1,000 kW** maximum output. Transients exceeding this ceiling are mathematically forced onto the battery buffer.
-* **Stack Modularization:** Fatigue amplitude penalties are normalized against a standard **200 kW** physical building block ($P_{base}$).
-* **Efficiency Bounds:** To account for stack degradation over the project lifecycle, hydrogen flow predictions span an uncertainty envelope bounded by $\eta_{upper} = 0.55$ (Best Case) and $\eta_{lower} = 0.45$ (Degraded Case).
-* **Battery Sizing Buffer:** Peak usable battery capacity excursions are divided by a **0.60** factor to respect a 60% Depth of Discharge (DoD) hardware limitation, providing realistic installed pack estimates.
+### 2. Commanded Propulsion Model (Main Engines)
+The main engine command tracking core utilizes a piecewise continuous response law. In port and during maneuvers, the main engines actively scale up to combat heavy crosswinds ($\gamma(t)$ is the continuous wind interpolation ramp):
+
+$$P_{\text{main,target}}(t) = \begin{cases}
+P_{\text{main,transit}} \cdot \Big(1.0 + \kappa_{\text{wave}} \cdot \max(0.0, \, W_{\text{eff}}(t) - W_{\text{baseline}})\Big) & \text{if Transit} \\
+P_{\text{main,maneuver,base}} + \gamma(t) \cdot (P_{\text{main,maneuver,max}} - P_{\text{main,maneuver,base}}) & \text{if Maneuvering} \\
+P_{\text{main,port,ops}} + \gamma(t) \cdot (P_{\text{main,maneuver,max}} - P_{\text{main,port,ops}}) & \text{if Port Operations} \\
+0.0 & \text{if Idling}
+\end{cases}$$
+
+*(Note: During `Port Operations`, $P_{\text{main,port,ops}}$ is maintained at $5,000\text{ kW}$ baseline to help pin the hull against the berth, scaling up to $5,400\text{ kW}$ in severe weather.)*
+
+### 3. Auxiliary Electrical Network Model
+To maintain strict adherence to energy-conservation principles, the auxiliary electrical network dynamically blends the rigid hotel base load with wind-reactive bow thrusters, capping absolute power at the system maximum capability ($P_{\text{aux,thruster,max}}$):
+
+$$P_{\text{aux,target}}(t) = \begin{cases} 
+P_{\text{aux,transit}} & \text{if Transit} \\
+P_{\text{aux,maneuver,base}} + t_{\text{factor}}(t) \cdot (P_{\text{aux,thruster,max}} - P_{\text{aux,maneuver,base}}) & \text{if Maneuvering} \\
+P_{\text{aux,port,ops}} + t_{\text{factor}}(t) \cdot (P_{\text{aux,thruster,max}} - P_{\text{aux,port,ops}}) & \text{if Port Operations} \\
+P_{\text{aux,idling}} & \text{if Idling}
+\end{cases}$$
 
 ---
 
-## 6. Setup & Installation
+## 5. Stochastic Noise, Inertia & Measurement Precision
+To perfectly emulate an authentic shipboard telemetry log, the target commands are passed through a rigorous three-stage physical transformation pipeline: **Load Drift (SDE) $\rightarrow$ Physical Inertia (Low-Pass Filter) $\rightarrow$ Sensor Error (White Noise)**.
 
-### Prerequisites
-* **Python:** Version 3.12 or higher.
-* **Environment:** A virtual environment (`venv`) is strongly recommended to isolate dependencies.
+### Stage 1: Mode-Dependent Ornstein-Uhlenbeck (OU) Load Drift
+Rather than using arbitrary additive white noise, macro-environmental deviations (wave slapping, course corrections, hydraulic cycling) follow mean-reverting stochastic paths governed by the vessel's discrete operational regime $S(t)$. 
 
-### Installation
-1. Clone the repository and navigate to the project root:
-   ```bash
-   git clone <repository_url>
-   cd mariner-wp9
-2. Initialize and activate the virtual environment:
-   ```bash
-    python3.12 -m venv .venv
-    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-3. Install the core dependencies from the manifest:
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-### Executing the Pipeline
-Ensure your raw vessel telemetry CSVs (e.g., Wembley_voy_236.csv) are placed in the data/raw/ directory. (Note: These files are ignored by git to protect end-user data).
+To guarantee that the user's dashboard slider (`base_sigma`) represents the true physical envelope of the fluctuations, the diffusion increment is scaled by $\sqrt{2\theta}$ and evaluated against the active commanded load:
 
-Launch the interactive Jupyter Notebook to execute the primary testing workflow:
-```bash
-jupyter notebook notebooks/test.ipynb 
-```
+$$\theta(S(t)) = \frac{1}{\tau(S(t))}$$
+$$\sigma_{\infty}(S(t)) = \text{base\_sigma} \cdot M_{\text{multiplier}}(S(t))$$
+$$d\chi(t) = -\theta(S(t)) \chi(t) dt + \Big(P_{\text{target}}(t) \cdot \sigma_{\infty}(S(t)) \cdot \sqrt{2\theta(S(t))}\Big) dB_t$$
 
-## 7. Author & Acknowledgments
-Author: Adam Haïk - Dual-Degree Engineering & Physics Student (Mines Paris / ENS)
+*(Note: The auxiliary hotel variance envelope is further multiplied by $\lambda_{\text{aux}}$ (`aux_volatility_reduction`) to reflect the structural dampening of internal breakers).*
 
-Institution: NORCE Norwegian Research Centre AS
+### Stage 2: Physical Inertia (The Low-Pass Filter)
+The noisy commanded tracks are constrained by physical system inertia. Main diesel engines exhibit heavy thermal/rotational lag, while permanent magnet electric motors react near-instantaneously. This is executed via an exact discrete first-order filter ($\alpha = \Delta t / \max(\Delta t, \tau)$):
+$$P_{\text{physical}}[t] = P_{\text{physical}}[t-1] + \alpha \cdot \Big((P_{\text{target}}[t] + \chi[t]) - P_{\text{physical}}[t-1]\Big)$$
 
-Note: The documentation, architectural refactoring, and initial codebase scaffolding in this repository were co-authored with the assistance of an AI engineering co-pilot.
+### Stage 3: Instrumental Telemetry Fuzz
+Finally, to match the sensor tolerances of an industrial Power Management System (PMS), a zero-mean Gaussian distribution is applied. To ensure the extreme bounds of the noise do not violate the user's desired precision envelope ($\delta_{\text{instrument}}$), the standard deviation is calibrated using the $3\sigma$ rule:
+$$\sigma_{\text{fuzz}} = \frac{\delta_{\text{instrument}}}{3.0}$$
+$$\epsilon_{\text{fuzz}}(t) \sim \mathcal{N}\left(0, \, (\sigma_{\text{fuzz}} \cdot P_{\text{physical}}(t))^2\right)$$
+
+The final output logged by the digital twin is bounded to prevent negative values:
+$$P_{\text{actual}}(t) = \max\Big(0.0, \, P_{\text{physical}}(t) + \epsilon_{\text{fuzz}}(t)\Big)$$
+
+---
+
+## 6. System Parameters Reference Framework
+
+### 1. Grounded Physical & Statistical Invariants (Locked Constants)
+| Variable | Value | Real-World Engineering Meaning |
+| :--- | :--- | :--- |
+| $\tau_{\text{diesel}}$ | $15.0\text{ s}$ | Rotational block inertia, turbocharger lag, and governor loop delay of main diesels. |
+| $\tau_{\text{electric}}$ | $1.0\text{ s}$ | Combined electromagnetic and inverter loop switching time constant of auxiliary drives. |
+| $\tau_{\text{human}}$ | $8.0\text{ s}$ | Ergonomic lag matching a captain holding a bridge joystick during docking adjustments. |
+| $\tau_{\text{gust,slow}}$ | $600.0\text{ s}$ | Meteorological relaxation window for meso-scale atmospheric field trends. |
+| $\tau_{\text{gust,fast}}$ | $30.0\text{ s}$ | Micro-scale wind turbulence duration tracking individual aerodynamic wind gusts. |
+| $\lambda_{\text{aux}}$ | $0.25$ | Volatility reduction scalar (`aux_volatility_reduction`) isolating hotel buses from raw hydrodynamic forces. |
+
+### 2. State-Dependent Physics Mapping (`STATE_PHYSICS`)
+| Regime ($S(t)$) | Relaxation $\tau$ (s) | Volatility Multiplier ($M$) | Physical Interpretation |
+| :--- | :--- | :--- | :--- |
+| **Transit** | $180.0$ | $1.0$ | Slow, rolling ocean swells; highly auto-correlated variance. |
+| **Maneuvering** | $10.0$ | $2.0$ | Sharp, aggressive throttle shifting and thruster bursts by the bridge crew. |
+| **Port Operations** | $60.0$ | $0.25$ | Mild macroscopic drift isolated mostly to the electrical bus (e.g., ramp hydraulics, passenger door HVAC cycling). |
+| **Idling** | $300.0$ | $0.10$ | Very subtle slow-rolling hotel load wander representing long-term thermostatic cycling (Refrigeration/Crew). |
+
+### 3. Tunable Parameters & Expert Interrogation Map
+| Slider Parameter | Code Variable | Real-World Operational Analogy |
+| :--- | :--- | :--- |
+| **Wind Gust Turbulence (%)** | `gust_frac` | Controls the maximum peak intensity of multi-scale wind ripples hitting the vessel in the Orchestrator layer. |
+| **Added Wave Resistance (%)** | `wave_res` | Governs the slope of linear main propulsion power scaling as hull resistance climbs in rough open water. |
+| **Load Drift Amplitude (%)** | `sigma_frac` | Sets the exact steady-state standard deviation ($\sigma_{\infty}$) of the macro-environmental wave/throttle load wandering. |
+| **Telemetry Sensor Error (%)** | `delta_inst_w` | Calibrates the absolute peak-to-peak $3\sigma$ measurement envelope of the high-frequency instrument static. |
+| **Maneuver Time (Mins)** | `maneuver_time_w` | Defines the baseline time limit for the inbound and outbound harbor transit phase before switching regimes. |
