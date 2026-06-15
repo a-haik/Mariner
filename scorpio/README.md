@@ -42,25 +42,25 @@ Given the Lower Heating Value ($LHV_{H_2} = 33.32 \text{ kWh/kg}$), the pipeline
 
 ## 3. Architecture & Data Pipeline
 
-The repository is structured as a functional, unidirectional data pipeline. It decouples raw I/O, signal processing, and mathematical aggregation to ensure reproducibility across different vessel datasets.
+The repository is structured as a functional, unidirectional data pipeline. It decouples raw I/O, human-in-the-loop labeling, signal processing, and mathematical aggregation to ensure reproducibility across different vessel datasets.
 
 ### Pipeline Execution Flow
-1. **`src/data_loader.py` (Ingestion & Regularization):** - **Input:** Raw, asynchronously sampled vessel telemetry (CSVs).
-   - **Process:** Deduplicates timestamps, maps ASCII coordinate encodings to Decimal Degrees (DD), and enforces a strict, monotonic 5-minute time grid using linear and circular interpolation.
-   - **Output:** A mathematically continuous Pandas DataFrame suitable for signal processing.
+1. **`src/preprocess_entry.py` (Standardization):**
+   - **Input:** Raw telemetry files (`.csv`, `.xlsx`).
+   - **Process:** Intelligently parses mixed date formats, removes legacy metadata footers, and dynamically corrects ASCII-encoded GPS coordinates to standard decimal degrees.
+   - **Output:** Cleaned `.csv` files stored in `data/interim/`.
 
-2. **`src/data_processing.py` (EMS Simulation & Feature Engineering):**
-   - **Input:** The regularized telemetry grid.
-   - **Process:** Computes kinematic derivatives (e.g., Rate of Turn) and electrical stress proxies (e.g., Power Volatility, Voltage Stress via Power Factor). Crucially, it applies the zero-phase Butterworth filter to simulate the hardware EMS and isolate the battery buffer requirements.
-   - **Output:** A dynamically bounded DataFrame containing both raw kinematics and filtered, stack-safe power demands.
+2. **`labeling_tool.py` (Interactive Human-in-the-loop UI):**
+   - **Input:** Interim telemetry files.
+   - **Process:** Launches a Streamlit web application. It pre-chunks the dataset using kinematic heuristics, allowing users to visually verify operational modes via Folium trajectory maps, Plotly global context maps, and high-frequency time-series charts. Users can merge/split blocks and optionally append geospatial port contexts.
+   - **Output:** Verified operational block registries (`data/labeled/`) and fully mapped high-frequency telemetry (`data/processed/`).
 
-3. **`src/mission_profiler.py` (Fatigue & Scenario Aggregation):**
-   - **Input:** The filtered telemetry.
-   - **Process:** Identifies continuous voyage blocks (`stay_id`) and classifies them into deterministic modes (e.g., `sea_transit_laden`, `port_loading`). It executes the Rainflow fatigue counting and integrates total $H_2$ consumption per block.
-   - **Output:** A structured `Block Registry` (individual voyage phases) and a `Global Statistics` matrix (duration-weighted averages per mode).
+3. **`src/data_loader.py` & `src/data_processing.py` (EMS Simulation):**
+   - **Input:** Verified `processed` telemetry.
+   - **Process:** Enforces a strict, monotonic 5-minute time grid using linear and circular interpolation. Applies the zero-phase Butterworth filter to isolate battery buffer requirements while safely passing the human-verified labels directly to the physics engine.
 
-4. **`src/visualizer.py` (Spatial & Trade-off Rendering):**
-   - **Process:** Generates interactive Folium maps to audit spatial-temporal port transitions, and Plotly matrices to visualize the complex trade-off space between hydrogen consumption and cumulative membrane fatigue.
+4. **`src/mission_profiler.py` & `src/visualizer.py` (Fatigue & Scenarios):**
+   - **Process:** Groups the continuous voyage phases into a `Block Registry`, executes Rainflow fatigue counting, integrates $H_2$ consumption, and scales these blocks into 1000-hour analytical testing scenarios. Visualizers render the resulting multi-dimensional tradeoff spaces.
 
 ---
 
@@ -96,14 +96,19 @@ The pipeline enforces several immutable physical boundaries derived directly fro
 scorpio/
 ├── .docs/                  # Supplemental documentation and design notes
 ├── data/
-│   └── raw/                # Raw telemetry CSVs 
+│   ├── raw/                # Raw legacy telemetry (.csv, .xlsx)
+│   ├── interim/            # Standardized telemetry (post-preprocessing)
+│   ├── labeled/            # Human-verified blocks & port contexts
+│   └── processed/          # Final 5-min telemetry mapped with status
 ├── notebooks/
-│   └── test.ipynb          # End-to-end integration and pipeline testing
+│   └── test.ipynb          # End-to-end integration and scenario testing
 ├── src/                    # Core analytical source code
+│   ├── preprocess_entry.py # Data standardization entrypoint
 │   ├── data_loader.py
 │   ├── data_processing.py
 │   ├── mission_profiler.py
 │   └── visualizer.py
+├── labeling_tool.py        # Interactive Streamlit UI application
 ├── .gitignore              # Prevents tracking of datasets
 ├── README.md               # Project documentation
 └── requirements.txt        # Managed dependency manifest
@@ -131,14 +136,19 @@ scorpio/
    pip install --upgrade pip
    pip install -r requirements.txt
 ### Executing the Pipeline
-Ensure your raw vessel telemetry CSVs are placed in the data/raw/ directory.
+1. Ensure your raw vessel telemetry CSVs are placed in the `data/raw/` directory.
 
-Launch the interactive Jupyter Notebook to execute the primary testing workflow.
-
+2. **Preprocess the data** to fix dates and GPS encoding:
+   ```bash
+   python src/preprocess_entry.py your_raw_file.csv
+3. **Launch the Labeling Tool** to verify operational modes:
+   ```bash
+   streamlit run labeling_tool.py
+4. **Run the Analysis**: Use `notebooks/01_test.ipynb` to execute the workflow.
 
 ## 8. Author & Acknowledgments
-Author: Adam Haïk - Dual-Degree Engineering & Physics Student (Mines Paris / ENS)
+Author: Adam Haïk - Dual-Degree Engineering & Physics Student (Mines Paris - PSL / ENS - PSL)
 
 Institution: NORCE Norwegian Research Centre AS
 
-Note: The documentation, architectural refactoring, and initial codebase scaffolding in this repository were co-authored with the assistance of an AI engineering co-pilot.
+Note: The documentation and initial codebase scaffolding in this repository were co-authored with the assistance of an AI engineering co-pilot.
