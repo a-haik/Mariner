@@ -125,7 +125,8 @@ class MissionProfiler:
                 'Mean_Power_kW': round(mean_power, 1),
                 'Power_Fluctuation': round(power_std, 2),
                 'Auto_Guessed_Mode': guessed_mode,
-                'Human_Verified_Mode': ""  # Left blank for the Streamlit app
+                'Human_Verified_Mode': "",
+                'Location': ""
             })
 
         return pd.DataFrame(blocks_summary)
@@ -136,28 +137,38 @@ class MissionProfiler:
         raw_status = df['STATUS'].astype(str).str.lower().fillna('unknown')
         speed = df['SHIP SPEED(knots)'].fillna(0.0)
 
-        status_block_id = (raw_status != raw_status.shift()).cumsum()
-        block_mean_speed = speed.groupby(status_block_id).transform('mean')
-        is_moving = block_mean_speed > self.speed_threshold
-
-        conditions = [
-            raw_status.isin(['laden', 'sea going']) | ((raw_status == 'unknown') & is_moving),
-            raw_status.isin(['ballast']),
-            (raw_status == 'idle') & is_moving,
-            ~is_moving & raw_status.isin(['loading']),
-            ~is_moving & raw_status.isin(['discharging', 'unloading']),
-            ~is_moving & raw_status.isin(['idle', 'port_idle', 'unknown']) 
-        ]
-        
         # NOTE: Lowercase mode names matching config.py ColorPalette
         choices = [
             'sea_transit_laden', 'sea_transit_ballast', 'sea_loitering',
             'port_loading', 'port_unloading', 'port_idle'
         ]
-        
-        df['MODE'] = np.select(conditions, choices, default='unknown')
+
+        # --- NEW SMART BYPASS ---
+        # If the dataset already contains standardized MARINER labels (from your Streamlit app),
+        # we bypass the old heuristic mapping and trust your human labels directly!
+        if raw_status.isin(choices).any():
+            df['MODE'] = raw_status
+        else:
+            # --- LEGACY MAPPING ---
+            status_block_id = (raw_status != raw_status.shift()).cumsum()
+            block_mean_speed = speed.groupby(status_block_id).transform('mean')
+            is_moving = block_mean_speed > self.speed_threshold
+
+            conditions = [
+                raw_status.isin(['laden', 'sea going']) | ((raw_status == 'unknown') & is_moving),
+                raw_status.isin(['ballast']),
+                (raw_status == 'idle') & is_moving,
+                ~is_moving & raw_status.isin(['loading']),
+                ~is_moving & raw_status.isin(['discharging', 'unloading']),
+                ~is_moving & raw_status.isin(['idle', 'port_idle', 'unknown']) 
+            ]
+            
+            df['MODE'] = np.select(conditions, choices, default='unknown')
+            
+        # Generate the stay_id used for chunking
         is_sea = df['MODE'].str.startswith('sea_')
         df['stay_id'] = (is_sea != is_sea.shift()).cumsum()
+        
         return df
 
     def generate_block_registry(self, df: pd.DataFrame, source_file_name: str = "Unknown", 

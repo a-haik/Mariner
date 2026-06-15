@@ -38,15 +38,19 @@ blocks_path = labeled_dir / f"blocks_{selected_file}"
 def init_blocks():
     if blocks_path.exists():
         df = pd.read_csv(blocks_path, parse_dates=['Start_Time', 'End_Time'])
-        # Force the column to be text so Pandas doesn't assume it's float64
         df['Human_Verified_Mode'] = df['Human_Verified_Mode'].astype(object).fillna("")
+        # Backwards compatibility: add Location to old files
+        if 'Location' not in df.columns:
+            df['Location'] = ""
+        df['Location'] = df['Location'].astype(object).fillna("")
         return df
     else:
         with st.spinner("Generating review blocks..."):
             profiler = MissionProfiler(speed_threshold=1.0)
             df = profiler.generate_review_blocks(interim_df)
-            # Force the column to be text
             df['Human_Verified_Mode'] = df['Human_Verified_Mode'].astype(object).fillna("")
+            if 'Location' not in df.columns:
+                df['Location'] = ""
             df.to_csv(blocks_path, index=False)
             return df
 
@@ -61,7 +65,7 @@ def recalculate_block_stats(block_row):
     mask = (interim_df.index >= block_row['Start_Time']) & (interim_df.index <= block_row['End_Time'])
     chunk = interim_df.loc[mask]
     if not chunk.empty:
-        speed_col = next((c for c in chunk.columns if 'SPEED' in c.upper()), 'SPEED(knots)')
+        speed_col = next((c for c in chunk.columns if 'SPEED' in c.upper()), 'SHIP SPEED(knots)')
         block_row['Duration_h'] = round((chunk.index.max() - chunk.index.min()).total_seconds() / 3600.0, 2)
         block_row['Mean_Speed_kn'] = round(chunk[speed_col].mean(), 2)
         block_row['Mean_Power_kW'] = round(chunk['AE_POWER(kW)'].mean(), 1)
@@ -102,14 +106,17 @@ with nav_col3:
         with st.spinner("Broadcasting labels and generating global plot (this may take a few seconds)..."):
             final_df = interim_df.copy()
             
-            # Start with empty values instead of 'unknown'
+            # Start with empty values
             final_df['STATUS'] = pd.NA 
+            final_df['LOCATION'] = pd.NA
             
             for _, block in blocks_df.iterrows():
                 final_df.loc[block['Start_Time']:block['End_Time'], 'STATUS'] = block['Human_Verified_Mode']
+                final_df.loc[block['Start_Time']:block['End_Time'], 'LOCATION'] = block.get('Location', '')
             
             # Auto-patch dropped edge ticks
             final_df['STATUS'] = final_df['STATUS'].bfill().ffill()
+            final_df['LOCATION'] = final_df['LOCATION'].bfill().ffill()
             
             final_df.to_csv(processed_dir / selected_file)
             
@@ -119,7 +126,7 @@ with nav_col3:
         st.info("Plotting your entire voyage dataset with verified operational modes...")
         
         # Call your existing plot_series function on the completed dataset
-        fig, axes = plot_series(final_df, ['SPEED(knots)', 'AE_POWER(kW)'], subplots=True, status_col='STATUS')
+        fig, axes = plot_series(final_df, ['SHIP SPEED(knots)', 'AE_POWER(kW)'], subplots=True, status_col='STATUS')
         st.pyplot(fig)
         
         st.stop()
@@ -184,8 +191,14 @@ col1, col2 = st.columns([1, 2])
 with col1:
     st.markdown(f"### Block ID: `{block_id}` of {len(blocks_df)}")
     st.markdown(f"**Duration:** {current_block['Duration_h']} hours")
+    st.markdown(f"**Start time:** {current_block['Start_Time']}")
+    st.markdown(f"**End time:** {current_block['End_Time']}")
     st.markdown(f"**Mean Speed:** {current_block['Mean_Speed_kn']} kn")
     st.markdown(f"**Mean Power:** {current_block['Mean_Power_kW']} kW")
+    
+    current_loc = current_block.get('Location', '')
+    selected_location = st.text_input("📍 Location (Optional):", value=str(current_loc))
+    # --------------------------
     
     status_options = [
         "port_idle", "port_loading", "port_unloading", 
@@ -199,15 +212,15 @@ with col1:
     selected_status = st.selectbox("Verify Operational Mode:", options=status_options, index=default_index)
     
     if st.button("💾 Save Label", use_container_width=True):
-        # Use .loc and force selected_status to be a string
         blocks_df.loc[curr_idx, 'Human_Verified_Mode'] = str(selected_status)
+        blocks_df.loc[curr_idx, 'Location'] = str(selected_location) # <--- NEW: Save the location
         blocks_df.to_csv(blocks_path, index=False)
         st.session_state.blocks_df = blocks_df
         st.success("Saved!")
 
 with col2:
     st.markdown("### Telemetry Profile")
-    fig, axes = plot_series(block_telemetry, ['SPEED(knots)', 'AE_POWER(kW)'], subplots=True)
+    fig, axes = plot_series(block_telemetry, ['SHIP SPEED(knots)', 'AE_POWER(kW)'], subplots=True)
     
     for ax in axes:
         ax.axvline(x=current_block['Start_Time'], color='red', linestyle='--', alpha=0.7)

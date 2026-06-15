@@ -25,7 +25,7 @@ def standardize_to_interim(filename: str):
         'Sample time': 'Sample time',
         'AE_POWER(kW)': 'AE_POWER(kW)',
         'HEADING(degree)': 'HEADING(degree)',
-        'SHIP SPEED(knots)': 'SPEED(knots)' 
+        'SHIP SPEED(knots)': 'SHIP SPEED(knots)' 
     }
     df = df.rename(columns=mapping)
     
