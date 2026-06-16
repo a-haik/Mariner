@@ -10,6 +10,8 @@ from src.controllers.stochastic import StochasticControl
 from src.controllers.hybrid_heuristic import HybridThresholdControl
 from src.controllers.hybrid_stochastic import HybridStochasticControl
 from src.simulator import HybridSimulator
+from src.controllers.expected_cost import ECHDiscreteSearch, ECHTargetStep
+from src.plants.hybrid_plant import calculate_fc_cost_per_second
 
 class VoyageBenchmarker:
     """
@@ -34,6 +36,19 @@ class VoyageBenchmarker:
         train_data = {'t': np.concatenate(train_t), 'Pd': np.concatenate(train_pd)}
         test_data = self.fleet_cache[test_day]
         return train_data, test_data
+
+    def _handle_output_formatting(self, df: pd.DataFrame, print_format: str) -> None:
+        """Helper to print dataframes in copy-pasteable formats cleanly."""
+        if print_format == 'markdown':
+            print("\n--- COPY-PASTABLE MARKDOWN TABLE ---")
+            print(df.to_markdown())
+            print("------------------------------------\n")
+        elif print_format == 'latex':
+            print("\n--- COPY-PASTABLE LATEX TABLE ---")
+            print(df.to_latex())
+            print("----------------------------------\n")
+        elif print_format == 'dataframe':
+            print(df)
 
     def _evaluate_single_run(self, approach: dict, train_data: dict, test_data: dict) -> dict:
         """Trains and evaluates a single approach configuration."""
@@ -100,6 +115,66 @@ class VoyageBenchmarker:
                 base_ctrl = ThresholdControl(config)
                 controller = NaiveHybridWrapper(base_ctrl, test_target_pd_macro, config.n0, config.p_star)
 
+        elif approach['strategy'] in ['EXPECTED_COST_DISCRETE', 'EXPECTED_COST_STEP']:
+            # 1. Fit Macro DTMC for transition probabilities
+            ds_train_macro = downsample_block_mean(train_data['t'], train_data['Pd'], config.Ts, align='t0')
+            mc_macro = fit_dtmc(ds_train_macro['Pd'], config.n_states, config.alpha)
+            
+            p_vals = mc_macro['levels']
+            n_vals = config.n_vals
+            
+            # 2. Build the instantaneous cost matrix C_o(n, P_d) on the fly
+            cost_matrix = np.zeros((len(n_vals), len(p_vals)))
+            for i, n_val in enumerate(n_vals):
+                for j, p_val in enumerate(p_vals):
+                    # CRITICAL FIX: Calculate individual module load (P_d / n)
+                    p_module = p_val / n_val
+                    
+                    # Core physical cost of running ONE module at this load
+                    module_cost = calculate_fc_cost_per_second(
+                        p_module,          # 1. Power per single module [kW]
+                        config.p_star,     # 2. Reference capacity p_nom [kW]
+                        config.k_h2,       # 3. k_h2
+                        config.k_fc,       # 4. k_fc
+                        config.tau_fc,     # 5. tau_fc
+                        config.a0,         # 6. a0
+                        config.a1,         # 7. a1
+                        config.a2,         # 8. a2
+                        config.alpha_deg   # 9. alpha_deg
+                    )
+                    
+                    # Total operational cost for the vessel is module_cost multiplied by active modules (n)
+                    cost_matrix[i, j] = module_cost * n_val
+            
+            # Extract Markov transition matrix
+            trans_mat = mc_macro.get('P', mc_macro.get('trans_mat'))
+            k_s = getattr(config, 'k_s', config.k_fc / config.s_max)
+            
+            # 3. Instantiate the requested Expected Cost Heuristic
+            if approach['strategy'] == 'EXPECTED_COST_DISCRETE':
+                base_ctrl = ECHDiscreteSearch(
+                    p_vals=p_vals,
+                    n_vals=n_vals,
+                    trans_mat_macro=trans_mat,
+                    cost_matrix=cost_matrix,
+                    dt=config.Ts,
+                    k_s=k_s,
+                    tolerance=approach.get('tolerance', 1)  # <--- ADD THIS
+                )
+            elif approach['strategy'] == 'EXPECTED_COST_STEP':
+                base_ctrl = ECHTargetStep(
+                    p_vals=p_vals,
+                    n_vals=n_vals,
+                    trans_mat_macro=trans_mat,
+                    cost_matrix=cost_matrix,
+                    dt=config.Ts,
+                    k_s=k_s,
+                    tolerance=approach.get('tolerance', 1)  # <--- ADD THIS
+                )
+                
+            # 4. Wrap it for the physical simulator
+            controller = NaiveHybridWrapper(base_ctrl, test_target_pd_macro, config.n0, config.p_star)
+
         # --- 3. Unified Simulator Execution ---
         sim = HybridSimulator(config, test_target_pd, plant)
         sim.t_micro = sim_t  
@@ -129,7 +204,7 @@ class VoyageBenchmarker:
     # PUBLIC API: THE THREE EVALUATION MODES
     # =========================================================================
 
-    def compare_approaches(self, approaches_dict: dict, train_days: list, test_day: int) -> pd.DataFrame:
+    def compare_approaches(self, approaches_dict: dict, train_days: list, test_day: int, print_format: str = 'markdown') -> tuple[pd.DataFrame, dict]:
         """Compares multiple approaches on the exact same train/test split"""
         print(f"\nComparing {len(approaches_dict)} approaches | Train: {train_days} | Test: Day {test_day}")
         train_data, test_data = self._prepare_data(train_days, test_day)
@@ -142,9 +217,11 @@ class VoyageBenchmarker:
         df = pd.DataFrame.from_dict(results, orient='index')
         sims = {name: res['simulator'] for name, res in results.items()}
         df = df.drop(columns=['simulator'])
+        
+        self._handle_output_formatting(df, print_format)
         return df, sims
 
-    def run_forward_chaining(self, approach: dict, min_train_days: int = 3) -> pd.DataFrame:
+    def run_forward_chaining(self, approach: dict, min_train_days: int = 3, print_format: str = 'markdown') -> pd.DataFrame:
         """Chronological evaluation (Train 1..t-1, Test t)."""
         print(f"\nStarting Forward Chaining CV for: {approach.get('name', 'Model')}")
         results = {}
@@ -159,9 +236,11 @@ class VoyageBenchmarker:
             metrics['Train Horizon'] = f"{len(train_days)} days"
             results[f"Test Day {test_day:02d}"] = metrics
             
-        return pd.DataFrame.from_dict(results, orient='index')
+        df = pd.DataFrame.from_dict(results, orient='index')
+        self._handle_output_formatting(df, print_format)
+        return df
 
-    def run_leave_one_out(self, approach: dict) -> pd.DataFrame:
+    def run_leave_one_out(self, approach: dict, print_format: str = 'markdown') -> pd.DataFrame:
         """Leave-One-Out evaluation (Test on D, Train on all others)"""
         print(f"\nStarting Leave-One-Out CV for: {approach.get('name', 'Model')}")
         results = {}
@@ -174,7 +253,9 @@ class VoyageBenchmarker:
             metrics = self._evaluate_single_run(approach, train_data, test_data)
             results[f"Test Day {test_day:02d}"] = metrics
             
-        return pd.DataFrame.from_dict(results, orient='index')
+        df = pd.DataFrame.from_dict(results, orient='index')
+        self._handle_output_formatting(df, print_format)
+        return df
     
 class NaiveHybridWrapper:
     """
