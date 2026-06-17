@@ -10,12 +10,11 @@ class SimConfig:
     into a single source of truth[cite: 223].
     """
     # --- Plant & Cost Parameters ---
-    p_star: float = 200.0          # Reference power capacity per PEMFC module [kW] 
-    n0: int = 10                    # Initial number of active fuel cell modules 
+    p_star: float = 80.0          # Reference power capacity per PEMFC module [kW] 
+    n0: int = 8                    # Initial number of active fuel cell modules 
     s_max: int = 4000              # Max on/off switches expected in lifetime
-    # s_max: int = 75000 
     k_h2: float = 4.0              # Cost of hydrogen fuel [€/kg] [cite: 225]
-    k_fc: float = 7500.0          # Cost of FC stack replacement [€] [cite: 225]
+    k_fc: float = 75000.0          # Cost of FC stack replacement [€] [cite: 225]
     tau_fc: float = 50000.0        # Expected service life [Hours] [cite: 225]
     alpha_deg: float = 1.0         # Degradation acceleration factor [cite: 225]
     a0: float = 55.8460e-3         # H2 flow coefficient [g/s] [cite: 226]
@@ -36,7 +35,7 @@ class SimConfig:
     
     # --- Control Action Space ---
     n_vals: np.ndarray = field(
-        default_factory=lambda: np.arange(1, 21, dtype=np.int32) # [cite: 228]
+        default_factory=lambda: np.arange(1, 17, dtype=np.int32) # [cite: 228]
     )
     sigma: float = 0.5             # Standard deviation parameter for synthetic Gaussian random walks [cite: 228]
 

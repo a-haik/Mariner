@@ -69,7 +69,7 @@ def load_and_interpolate_sov_data(file_paths: list[str]) -> dict:
     }
 
 
-def load_and_cache_entire_fleet(config: SimConfig) -> dict[int, dict]:
+def load_and_cache_entire_fleet() -> dict[int, dict]:
     """
     Executes disk I/O exactly once to cache all available days (1-14) in RAM.
     Falls back gracefully to mock data if specific file frames are missing.

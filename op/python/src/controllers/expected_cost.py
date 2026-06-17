@@ -20,7 +20,7 @@ def _compute_ech_discrete_core(P_d_trajectory: np.ndarray, p_vals: np.ndarray, n
     
     for t in range(1, T_horizon):
         P_d_curr = P_d_trajectory[t]
-        l = np.abs(p_vals - P_d_curr).argmin()
+        i = np.abs(p_vals - P_d_curr).argmin()
         time_left = (T_horizon - t - 1) * dt
         
         # We now minimize the RATE ($/sec), not the sum
@@ -28,7 +28,7 @@ def _compute_ech_discrete_core(P_d_trajectory: np.ndarray, p_vals: np.ndarray, n
         best_n_idx = n_prev_idx
         
         for j in range(num_n_states):
-            p_h = P_hold[l, j]
+            p_h = P_hold[i, j]
             if p_h >= 0.9999:
                 e_t_hold = time_left
             else:
@@ -40,7 +40,7 @@ def _compute_ech_discrete_core(P_d_trajectory: np.ndarray, p_vals: np.ndarray, n
             switch_cost = k_s * abs(n_vals[j] - n_vals[n_prev_idx])
             
             # AMORTIZED COST RATE ($/second)
-            cost_rate_j = cost_matrix[j, l] + (switch_cost / e_t_hold)
+            cost_rate_j = cost_matrix[j, i] + (switch_cost / e_t_hold)
             
             if cost_rate_j < best_cost_rate:
                 best_cost_rate = cost_rate_j
@@ -65,10 +65,10 @@ def _compute_ech_target_step_core(P_d_trajectory: np.ndarray, p_vals: np.ndarray
     
     for t in range(1, T_horizon):
         P_d_curr = P_d_trajectory[t]
-        l = np.abs(p_vals - P_d_curr).argmin()
+        i = np.abs(p_vals - P_d_curr).argmin()
         time_left = (T_horizon - t - 1) * dt
         
-        target_idx = ideal_targets[l]
+        target_idx = ideal_targets[i]
         
         if target_idx == n_prev_idx:
             n_control[t] = n_vals[n_prev_idx]
@@ -81,11 +81,11 @@ def _compute_ech_target_step_core(P_d_trajectory: np.ndarray, p_vals: np.ndarray
         unique_candidates = np.unique(candidates) 
         
         # AMORTIZED BASELINE: The cost rate of doing nothing is just its operating cost.
-        best_cost_rate = cost_matrix[n_prev_idx, l]
+        best_cost_rate = cost_matrix[n_prev_idx, i]
         best_n_idx = n_prev_idx
         
         for j in unique_candidates:
-            p_h = P_hold[l, j]
+            p_h = P_hold[i, j]
             if p_h >= 0.9999:
                 e_t_hold = time_left
             else:
@@ -97,7 +97,7 @@ def _compute_ech_target_step_core(P_d_trajectory: np.ndarray, p_vals: np.ndarray
             switch_cost = k_s * abs(n_vals[j] - n_vals[n_prev_idx])
             
             # AMORTIZED COST RATE ($/second)
-            cost_rate_j = cost_matrix[j, l] + (switch_cost / e_t_hold)
+            cost_rate_j = cost_matrix[j, i] + (switch_cost / e_t_hold)
             
             if cost_rate_j < best_cost_rate:
                 best_cost_rate = cost_rate_j
@@ -130,16 +130,16 @@ class ExpectedCostHeuristicBase(ControlLaw):
         self.ideal_targets = np.argmin(cost_matrix, axis=0) 
         
         # 2. Build Top-M Comfort Zones
-        # K_zones[j] stores the demand indices 'l' where module count 'j' is in the Top M cheapest options
+        # K_zones[j] stores the demand indices 'i' where module count 'j' is in the Top M cheapest options
         K_zones = {j: [] for j in range(num_n)}
-        for l in range(num_p):
+        for i in range(num_p):
             # Sort the column of costs for this demand state ascending
-            costs_l = cost_matrix[:, l]
+            costs_l = cost_matrix[:, i]
             top_m_indices = np.argsort(costs_l)[:self.tolerance]
             
             # Map this demand state to the comfort zones of those top M module counts
             for j in top_m_indices:
-                K_zones[j].append(l)
+                K_zones[j].append(i)
                 
         # 3. Calculate the P_hold matrix
         self.P_hold = np.zeros((num_p, num_n))
