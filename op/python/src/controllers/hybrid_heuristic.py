@@ -25,7 +25,7 @@ class HybridThresholdControl:
         
         # --- STEP A: The Module Decision (n_k) ---
         # Identical to the baseline threshold statistics
-        x = (current_pd / self.config.p_star) - n_prev
+        x = (current_pd / self.config.p_nom) - n_prev
         t_rem = max(1.0, float(self.T_macro - macro_step_k - 1))
         x_thres = 2.0 * self.config.sigma * ((n_prev * self.config.k_s / t_rem) + 1.0)
         
@@ -48,6 +48,6 @@ class HybridThresholdControl:
         best_pfc = np.clip(pfc_requested, pfc_min, pfc_max)
         
         # 3. Final sanity check: Fuel Cell cannot output negative power or exceed active module capacity
-        best_pfc = np.clip(best_pfc, 0.0, n_k * self.config.p_star)
+        best_pfc = np.clip(best_pfc, 0.0, n_k * self.config.p_max)
         
         return n_k, best_pfc

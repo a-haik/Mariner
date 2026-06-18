@@ -9,16 +9,16 @@ classdef Simulator < handle
         C_o
         C_s
         C
-        p_star
+        p_nom
     end
     
     methods
-        function obj = Simulator(p_star, P_d, n0, k_s)
+        function obj = Simulator(p_nom, P_d, n0, k_s)
             obj.T = numel(P_d);
             obj.n0 = n0;
             obj.k_s = k_s;
             obj.P_d = P_d;
-            obj.p_star = p_star;
+            obj.p_nom = p_nom;
         end
         
         function TC = run(obj, control_law)
@@ -34,7 +34,7 @@ classdef Simulator < handle
         
         function [C_o, C_s, C, TC] = calculate_cost(obj, P_d, n, k_s)
             % Operating cost
-            C_o = ((P_d/obj.p_star - n).^2) ./ n;
+            C_o = ((P_d/obj.p_nom - n).^2) ./ n;
 
             % Switching cost for continuous n
             n_diff = [0, diff(n)];

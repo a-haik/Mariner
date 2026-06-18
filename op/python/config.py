@@ -10,7 +10,8 @@ class SimConfig:
     into a single source of truth[cite: 223].
     """
     # --- Plant & Cost Parameters ---
-    p_star: float = 80.0          # Reference power capacity per PEMFC module [kW] 
+    p_nom: float = 80.0           # Nominal power capacity per PEMFC module [kW] 
+    p_max: float = 200.0           # Absolute maximum physical power per module [kW]
     n0: int = 8                    # Initial number of active fuel cell modules 
     s_max: int = 4000              # Max on/off switches expected in lifetime
     k_h2: float = 4.0              # Cost of hydrogen fuel [€/kg] [cite: 225]
@@ -65,8 +66,8 @@ class SimConfig:
         real_k_s = self.k_fc / self.s_max
         object.__setattr__(self, 'k_s', real_k_s)
 
-        if self.p_star <= 0:
-            raise ValueError("Reference power p_star must be strictly positive.") # [cite: 232]
+        if self.p_nom <= 0:
+            raise ValueError("Reference power p_nom must be strictly positive.") # [cite: 232]
         if self.n0 not in self.n_vals:
             raise ValueError(f"Initial module state n0={self.n0} must fall within action space n_vals.") # [cite: 232]
         if self.alpha < 0:

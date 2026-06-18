@@ -8,18 +8,18 @@ classdef StochasticControl < ControlLaw
         V        % Value function
         policy   % Policy function
         transition_matrix  % Transition matrix (always used)
-        p_star
+        p_nom
     end
     
     methods
-        function obj = StochasticControl(k_s, p_star, states, transition_matrix, n_vals)
+        function obj = StochasticControl(k_s, p_nom, states, transition_matrix, n_vals)
             % Constructor can be called as:
             % StochasticDynamicProgrammingControl(k_s, sigma) - for random walk
             % StochasticDynamicProgrammingControl(k_s, states, transition_matrix) - for general Markov chain
             % Optional parameters for random walk: p_min, p_max, p_steps, n_steps
             
             obj.k_s = k_s;
-            obj.p_star = p_star;
+            obj.p_nom = p_nom;
             
             % Markov chain mode: (k_s, states, transition_matrix, ...)
             obj.p_vals = states;  % states become p_vals
@@ -53,7 +53,7 @@ classdef StochasticControl < ControlLaw
                 for j = 1:n_size
                     n_val = obj.n_vals(j);
                     if n_val > 0
-                        V(T, i, j) = ((p_val/obj.p_star - n_val)^2)/n_val;
+                        V(T, i, j) = ((p_val/obj.p_nom - n_val)^2)/n_val;
                     end
                 end
             end
@@ -66,7 +66,7 @@ classdef StochasticControl < ControlLaw
                         n_val = obj.n_vals(j);
                         if n_val <= 0, continue; end
                         
-                        C_o = ((p_val/obj.p_star - n_val)^2)/n_val;
+                        C_o = ((p_val/obj.p_nom - n_val)^2)/n_val;
                         best_cost = inf;
                         best_action = 1;
                         

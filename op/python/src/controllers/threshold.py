@@ -5,7 +5,7 @@ from src.controllers.base import ControlLaw
 from config import SimConfig
 
 @njit(cache=True)
-def _compute_threshold_core(P_d: np.ndarray, n0: int, k_s: float, p_star: float, sigma: float) -> np.ndarray:
+def _compute_threshold_core(P_d: np.ndarray, n0: int, k_s: float, p_nom: float, sigma: float) -> np.ndarray:
     """
     Numba implementation of the moving horizon threshold control strategy.
     Handles the index offset conversion from MATLAB's 1-based loop structure.
@@ -16,7 +16,7 @@ def _compute_threshold_core(P_d: np.ndarray, n0: int, k_s: float, p_star: float,
     
     for t in range(1, T):
         # Calculate current power mismatch relative to the previous step's module capacity
-        x = P_d[t] / p_star - n_control[t-1]
+        x = P_d[t] / p_nom - n_control[t-1]
         
         # Replicate MATLAB's remaining time index logic: max(1, T - t_matlab)
         # Since t is 0-indexed, t_matlab = t + 1, so T - t_matlab = T - t - 1
@@ -43,5 +43,5 @@ class ThresholdControl(ControlLaw):
 
     def compute(self, P_d: np.ndarray, n0: int) -> np.ndarray:
         return _compute_threshold_core(
-            P_d, n0, self.config.k_s, self.config.p_star, self.config.sigma
+            P_d, n0, self.config.k_s, self.config.p_nom, self.config.sigma
         )

@@ -2,7 +2,7 @@
 function params = config()
     % Basic simulation parameters
     params.k_s = 1;         % Switching cost coefficient
-    params.p_star = 200;   % Reference power
+    params.p_nom = 200;   % Reference power
     params.num_runs = 1;    % Number of simulation runs
     params.ENABLE_PLOTTING = true;
     

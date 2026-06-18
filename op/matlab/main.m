@@ -55,8 +55,8 @@ function controllers = create_controllers(params, model)
     
     controllers = {
         ConstantControl(), ...
-        StochasticControl(params.k_s, params.p_star, model.levels, model.P, params.n_vals), ...
-        ThresholdControl(params.k_s, params.p_star)
+        StochasticControl(params.k_s, params.p_nom, model.levels, model.P, params.n_vals), ...
+        ThresholdControl(params.k_s, params.p_nom)
     };
 end
 
@@ -69,7 +69,7 @@ function results = run_simulation(params, P_d, controllers)
     
     for i = 1:num_controllers
         % Create simulator instance
-        simulator = Simulator(params.p_star, P_d, params.n0, params.k_s);
+        simulator = Simulator(params.p_nom, P_d, params.n0, params.k_s);
         
         % Run simulation
         total_cost = simulator.run(controllers{i});
@@ -97,7 +97,7 @@ function plot_results(params, results, controllers, demand_trend)
         simulator_data = struct();
         simulator_data.C_o = results{i}.operating_costs;
         simulator_data.C_s = results{i}.switching_costs;
-        simulator_data.n = results{i}.control*params.p_star;
+        simulator_data.n = results{i}.control*params.p_nom;
         simulator_data.P_d = results{i}.demand;
         all_run_data{i} = simulator_data;
     end

@@ -105,7 +105,7 @@ class VoyageBenchmarker:
                 solver = BaselineSDPSolver(config, mc_macro)
                 policy = solver.compute_policy_matrix(macro_horizon)
                 base_ctrl = StochasticControl(mc_macro['levels'], config.n_vals, policy)
-                controller = NaiveHybridWrapper(base_ctrl, test_target_pd_macro, config.n0, config.p_star)
+                controller = NaiveHybridWrapper(base_ctrl, test_target_pd_macro, config.n0, config.p_max)
                 
         elif approach['strategy'] == 'HEURISTIC':
             if approach.get('is_hybrid', False):
@@ -113,7 +113,7 @@ class VoyageBenchmarker:
             else:
                 # Wrap the naive Threshold logic
                 base_ctrl = ThresholdControl(config)
-                controller = NaiveHybridWrapper(base_ctrl, test_target_pd_macro, config.n0, config.p_star)
+                controller = NaiveHybridWrapper(base_ctrl, test_target_pd_macro, config.n0, config.p_max)
 
         elif approach['strategy'] in ['EXPECTED_COST_DISCRETE', 'EXPECTED_COST_STEP']:
             # 1. Fit Macro DTMC for transition probabilities
@@ -133,7 +133,7 @@ class VoyageBenchmarker:
                     # Core physical cost of running ONE module at this load
                     module_cost = calculate_fc_cost_per_second(
                         p_module,          # 1. Power per single module [kW]
-                        config.p_star,     # 2. Reference capacity p_nom [kW]
+                        config.p_nom,     # 2. Reference capacity p_nom [kW]
                         config.k_h2,       # 3. k_h2
                         config.k_fc,       # 4. k_fc
                         config.tau_fc,     # 5. tau_fc
@@ -173,7 +173,7 @@ class VoyageBenchmarker:
                 )
                 
             # 4. Wrap it for the physical simulator
-            controller = NaiveHybridWrapper(base_ctrl, test_target_pd_macro, config.n0, config.p_star)
+            controller = NaiveHybridWrapper(base_ctrl, test_target_pd_macro, config.n0, config.p_max)
 
         # --- 3. Unified Simulator Execution ---
         sim = HybridSimulator(config, test_target_pd, plant)
@@ -261,10 +261,10 @@ class NaiveHybridWrapper:
     """
     Wraps the baseline MATLAB controllers to run inside the Multi-Timescale Hybrid physical world.
     """
-    def __init__(self, base_controller, macro_demand_profile: np.ndarray, n0: int, p_star: float):
+    def __init__(self, base_controller, macro_demand_profile: np.ndarray, n0: int, p_max: float):
         self.base_controller = base_controller
         self.macro_demand = macro_demand_profile
-        self.p_star = p_star
+        self.p_max = p_max
         
         # Pre-compute the entire deterministic sequence of module decisions
         self.n_decisions = base_controller.compute(macro_demand_profile, n0)
@@ -280,6 +280,6 @@ class NaiveHybridWrapper:
         pfc_requested = self.macro_demand[idx_demand]
         
         # 3. Strict physical clipping (FC cannot output negative power or exceed active capacity)
-        pfc_k = np.clip(pfc_requested, 0.0, n_k * self.p_star)
+        pfc_k = np.clip(pfc_requested, 0.0, n_k * self.p_max)
         
         return n_k, pfc_k

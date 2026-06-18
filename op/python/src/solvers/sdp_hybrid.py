@@ -23,7 +23,7 @@ def _dfs_exact_tree(depth: int, lambda_scale: int, p_idx: int, soc_curr: float,
                     n_k: int, n_prev: int, p_fc: float, path_prob: float, 
                     p_vals: np.ndarray, trans_mat_macro: np.ndarray, trans_mat_micro: np.ndarray, 
                     dt: float, e_bat: float, c_bat_kwh: float, n_eol: int, 
-                    p_star: float, k_s: float, penalty_wall: float, 
+                    p_nom: float, k_s: float, penalty_wall: float, 
                     V_next: np.ndarray, soc_vals: np.ndarray) -> float:
     """Recursively explores every possible Markov path over the lambda window."""
     p_d = p_vals[p_idx]
@@ -54,7 +54,7 @@ def _dfs_exact_tree(depth: int, lambda_scale: int, p_idx: int, soc_curr: float,
             expected_branch_cost += _dfs_exact_tree(
                 depth + 1, lambda_scale, i_next, soc_next, n_k, n_prev, p_fc, 
                 path_prob * trans_prob, p_vals, trans_mat_macro, trans_mat_micro, dt, e_bat, 
-                c_bat_kwh, n_eol, p_star, k_s, penalty_wall, V_next, soc_vals
+                c_bat_kwh, n_eol, p_nom, k_s, penalty_wall, V_next, soc_vals
             )
             
     return path_prob * c_bat_step + expected_branch_cost
@@ -64,7 +64,7 @@ def _solve_exact_tree_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                               soc_vals: np.ndarray, pfc_vals: np.ndarray, 
                               trans_mat_macro: np.ndarray, trans_mat_micro: np.ndarray, 
                               dt: float, lambda_scale: int, e_bat: float, c_bat_kwh: float, n_eol: int, 
-                              p_star: float, k_s: float, penalty_wall: float, soc_terminal_target: float, 
+                              p_nom: float, k_s: float, penalty_wall: float, soc_terminal_target: float, 
                               k_h2: float, k_fc: float, tau_fc: float, a0: float, a1: float, a2: float, alpha_deg: float):
     
     p_size, n_size, soc_size = len(p_vals), len(n_vals), len(soc_vals)
@@ -77,7 +77,7 @@ def _solve_exact_tree_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
             for s in range(soc_size):
                 V[T - 1, i, j, s] = 0.0 if soc_vals[s] >= soc_terminal_target else penalty_wall
                 policy_n[T - 1, i, j, s] = n_vals[j]
-                safe_pfc = min(max(p_vals[i], 0.0), n_vals[j] * p_star)
+                safe_pfc = min(max(p_vals[i], 0.0), n_vals[j] * p_nom)
                 policy_pfc[T - 1, i, j, s] = safe_pfc
                     
     for t in range(T - 2, -1, -1):
@@ -95,17 +95,17 @@ def _solve_exact_tree_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                         
                         for pfc_idx in range(len(pfc_vals)):
                             p_fc = pfc_vals[pfc_idx]
-                            if p_fc < pfc_min or p_fc > pfc_max or p_fc > (n_next * p_star):
+                            if p_fc < pfc_min or p_fc > pfc_max or p_fc > (n_next * p_nom):
                                 continue
 
                             exp_cost_and_future = _dfs_exact_tree(
                                 0, lambda_scale, i, soc_curr, n_next, n_curr, p_fc, 1.0,
                                 p_vals, trans_mat_macro, trans_mat_micro, dt, e_bat, c_bat_kwh, n_eol, 
-                                p_star, k_s, penalty_wall, V[t + 1, :, a_idx, :], soc_vals
+                                p_nom, k_s, penalty_wall, V[t + 1, :, a_idx, :], soc_vals
                             )
                             
                             if n_next > 0:
-                                c_o_sec = calculate_fc_cost_per_second(p_fc / n_next, p_star, k_h2, k_fc, tau_fc, a0, a1, a2, alpha_deg)
+                                c_o_sec = calculate_fc_cost_per_second(p_fc / n_next, p_nom, k_h2, k_fc, tau_fc, a0, a1, a2, alpha_deg)
                                 c_o_val = n_next * c_o_sec * (dt * lambda_scale)
                             else:
                                 c_o_val = penalty_wall
@@ -128,7 +128,7 @@ def _solve_exact_tree_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
 def _solve_mean_proxy_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, 
                               soc_vals: np.ndarray, pfc_vals: np.ndarray, trans_mat_macro: np.ndarray, 
                               dt: float, lambda_scale: int, e_bat: float, c_bat_kwh: float, n_eol: int, 
-                              p_star: float, k_s: float, penalty_wall: float, soc_terminal_target: float,
+                              p_nom: float, p_max: float, k_s: float, penalty_wall: float, soc_terminal_target: float,
                               k_h2: float, k_fc: float, tau_fc: float, a0: float, a1: float, a2: float, alpha_deg: float):
     
     p_size, n_size, soc_size = len(p_vals), len(n_vals), len(soc_vals)
@@ -141,7 +141,7 @@ def _solve_mean_proxy_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
             for s in range(soc_size):
                 V[T - 1, i, j, s] = 0.0 if soc_vals[s] >= soc_terminal_target else penalty_wall
                 policy_n[T - 1, i, j, s] = n_vals[j]
-                safe_pfc = min(max(p_vals[i], 0.0), n_vals[j] * p_star)
+                safe_pfc = min(max(p_vals[i], 0.0), n_vals[j] * p_max)
                 policy_pfc[T - 1, i, j, s] = safe_pfc
                      
     for t in range(T - 2, -1, -1):
@@ -158,12 +158,12 @@ def _solve_mean_proxy_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                         n_next = n_vals[a_idx]
                         for pfc_idx in range(len(pfc_vals)):
                             p_fc = pfc_vals[pfc_idx]
-                            if p_fc < pfc_min or p_fc > pfc_max or p_fc > (n_next * p_star):
+                            if p_fc < pfc_min or p_fc > pfc_max or p_fc > (n_next * p_max):
                                 continue
                            
                             step_cost, _, _, next_soc = _simulate_micro_physics(
                                 soc_curr, n_next, n_curr, p_fc, p_d_micro, 
-                                dt, e_bat, c_bat_kwh, n_eol, p_star, k_s, penalty_wall,
+                                dt, e_bat, c_bat_kwh, n_eol, p_nom, k_s, penalty_wall,
                                 k_h2, k_fc, tau_fc, a0, a1, a2, alpha_deg
                             )
                             
@@ -192,7 +192,7 @@ def _solve_mean_proxy_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
 def _precompute_tensor_sweep_tensors(lambda_scale: int, mc_samples: int, p_vals: np.ndarray, 
                                      soc_vals: np.ndarray, n_vals: np.ndarray, pfc_vals: np.ndarray, 
                                      trans_mat_micro: np.ndarray, dt: float, e_bat: float, 
-                                     c_bat_kwh: float, n_eol: int, p_star: float, k_s: float, 
+                                     c_bat_kwh: float, n_eol: int, p_nom: float, k_s: float, 
                                      penalty_wall: float, k_h2: float, k_fc: float, tau_fc: float, 
                                      a0: float, a1: float, a2: float, alpha_deg: float) -> tuple[np.ndarray, np.ndarray]:
     """Generates the offline expected transition and cost mapping via Monte Carlo."""
@@ -206,7 +206,7 @@ def _precompute_tensor_sweep_tensors(lambda_scale: int, mc_samples: int, p_vals:
             for pfc_idx in range(pfc_size):
                 for s in range(soc_size):
                     pfc_min, pfc_max = _get_pfc_bounds(soc_vals[s], p_vals[i], e_bat, dt * lambda_scale)
-                    if pfc_vals[pfc_idx] < pfc_min or pfc_vals[pfc_idx] > pfc_max or pfc_vals[pfc_idx] > (n_next * p_star):
+                    if pfc_vals[pfc_idx] < pfc_min or pfc_vals[pfc_idx] > pfc_max or pfc_vals[pfc_idx] > (n_next * p_nom):
                         continue
                         
                     sum_cost, sum_soc, valid_paths = 0.0, 0.0, 0
@@ -225,7 +225,7 @@ def _precompute_tensor_sweep_tensors(lambda_scale: int, mc_samples: int, p_vals:
                     
                         cost, _, _, final_soc = _simulate_micro_physics(
                             soc_vals[s], n_next, n_next, pfc_vals[pfc_idx], 
-                            p_d_micro, dt, e_bat, c_bat_kwh, n_eol, p_star, k_s, penalty_wall,
+                            p_d_micro, dt, e_bat, c_bat_kwh, n_eol, p_nom, k_s, penalty_wall,
                             k_h2, k_fc, tau_fc, a0, a1, a2, alpha_deg
                         )
                         
@@ -245,7 +245,7 @@ def _precompute_tensor_sweep_tensors(lambda_scale: int, mc_samples: int, p_vals:
 def _solve_tensor_sweep_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, 
                                 soc_vals: np.ndarray, pfc_vals: np.ndarray, trans_mat_macro: np.ndarray, 
                                 exp_cost_tensor: np.ndarray, exp_soc_tensor: np.ndarray, 
-                                k_s: float, p_star: float, penalty_wall: float, soc_terminal_target: float,
+                                k_s: float, p_nom: float, penalty_wall: float, soc_terminal_target: float,
                                 k_h2: float, k_fc: float, tau_fc: float, a0: float, a1: float, a2: float, alpha_deg: float):
     """The lightning fast online matrix sweep."""
     p_size, n_size, soc_size = len(p_vals), len(n_vals), len(soc_vals)
@@ -258,7 +258,7 @@ def _solve_tensor_sweep_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
             for s in range(soc_size):
                 V[T - 1, i, j, s] = 0.0 if soc_vals[s] >= soc_terminal_target else penalty_wall
                 policy_n[T - 1, i, j, s] = n_vals[j]
-                safe_pfc = min(max(p_vals[i], 0.0), n_vals[j] * p_star)
+                safe_pfc = min(max(p_vals[i], 0.0), n_vals[j] * p_nom)
                 policy_pfc[T - 1, i, j, s] = safe_pfc
                     
     for t in range(T - 2, -1, -1):
@@ -305,7 +305,7 @@ class HybridSDPSolver:
         self.variant = variant.upper()
         
         self.soc_grid = np.arange(0.0, 100.0 + self.config.soc_step, self.config.soc_step)
-        max_power = np.max(self.config.n_vals) * self.config.p_star
+        max_power = np.max(self.config.n_vals) * self.config.p_nom
         self.pfc_grid = np.arange(0.0, max_power + self.config.p_fc_step, self.config.p_fc_step)
         
         if self.variant not in ['EXACT_TREE', 'MEAN_PROXY', 'TENSOR_SWEEP']:
@@ -320,7 +320,7 @@ class HybridSDPSolver:
                 macro_horizon_length, self.mc_macro['levels'], c.n_vals,
                 self.soc_grid, self.pfc_grid, self.mc_macro['P'], self.mc_micro['P'], c.dt, 
                 c.lambda_scale, c.e_bat, c.c_bat_kwh, 
-                c.n_eol_cycles, c.p_star, c.k_s, 
+                c.n_eol_cycles, c.p_nom, c.k_s, 
                 c.penalty_wall, c.soc_terminal_target,
                 c.k_h2, c.k_fc, c.tau_fc, c.a0, c.a1, c.a2, c.alpha_deg
             )
@@ -330,7 +330,7 @@ class HybridSDPSolver:
                 macro_horizon_length, self.mc_macro['levels'], c.n_vals,
                 self.soc_grid, self.pfc_grid, self.mc_macro['P'], c.dt, 
                 c.lambda_scale, c.e_bat, c.c_bat_kwh, 
-                c.n_eol_cycles, c.p_star, c.k_s, 
+                c.n_eol_cycles, c.p_nom, c.p_max, c.k_s, 
                 c.penalty_wall, c.soc_terminal_target,
                 c.k_h2, c.k_fc, c.tau_fc, c.a0, c.a1, c.a2, c.alpha_deg
             )
@@ -341,14 +341,14 @@ class HybridSDPSolver:
                 c.lambda_scale, c.mc_samples, self.mc_micro['levels'],
                 self.soc_grid, c.n_vals, self.pfc_grid, self.mc_micro['P'],
                 c.dt, c.e_bat, c.c_bat_kwh, 
-                c.n_eol_cycles, c.p_star, c.k_s, 
+                c.n_eol_cycles, c.p_nom, c.k_s, 
                 c.penalty_wall, c.k_h2, c.k_fc, c.tau_fc, c.a0, c.a1, c.a2, c.alpha_deg
             )
             print(" -> Tensors Cached. Initiating Online Sweep...")
             return _solve_tensor_sweep_bellman(
                 macro_horizon_length, self.mc_macro['levels'], c.n_vals,
                 self.soc_grid, self.pfc_grid, self.mc_macro['P'],
-                cost_tens, soc_tens, c.k_s, c.p_star, 
+                cost_tens, soc_tens, c.k_s, c.p_nom, 
                 c.penalty_wall, c.soc_terminal_target,
                 c.k_h2, c.k_fc, c.tau_fc, c.a0, c.a1, c.a2, c.alpha_deg
             )

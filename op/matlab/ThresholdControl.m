@@ -2,13 +2,13 @@
 classdef ThresholdControl < ControlLaw
     properties
         k_s
-        p_star
+        p_nom
     end
     
     methods
-        function obj = ThresholdControl(k_s, p_star)
+        function obj = ThresholdControl(k_s, p_nom)
             obj.k_s = k_s;
-            obj.p_star = p_star;
+            obj.p_nom = p_nom;
         end
         
         function n_control = compute(obj, P_d, n0)
@@ -17,7 +17,7 @@ classdef ThresholdControl < ControlLaw
             n_control(1) = n0;
             
             for t = 2:T
-                x = P_d(t)/obj.p_star - n_control(t-1);
+                x = P_d(t)/obj.p_nom - n_control(t-1);
                 x_thres = 2* 0.5 * (n_control(t-1) * obj.k_s / max(1, T-t) + 1);
                 
                 if x > x_thres

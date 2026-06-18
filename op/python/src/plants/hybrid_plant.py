@@ -23,7 +23,7 @@ def _get_pfc_bounds(soc_current: float, pd_current: float, e_bat_kwh: float, dt:
 @njit(cache=True)
 def _simulate_micro_physics(soc_k: float, n_k: int, n_prev: int, p_fc_k: float, 
                             p_d_micro: np.ndarray, dt: float, e_bat: float, 
-                            c_bat_kwh: float, n_eol: int, p_star: float, 
+                            c_bat_kwh: float, n_eol: int, p_nom: float, p_max: float, 
                             k_s: float, penalty_wall: float,
                             # --- New Config Arguments ---
                             k_h2: float, k_fc: float, tau_fc: float, 
@@ -36,10 +36,12 @@ def _simulate_micro_physics(soc_k: float, n_k: int, n_prev: int, p_fc_k: float,
     # --- 1. True Macro-scale FC Costs ---
     if n_k > 0:
         p_module = p_fc_k / n_k
-        c_o_sec = calculate_fc_cost_per_second(p_module, p_star, k_h2, k_fc, tau_fc, a0, a1, a2, alpha_deg)
+        # FIX: Enforce physical simulator limitations
+        if p_module > p_max:
+            return penalty_wall, penalty_wall, penalty_wall, soc_k
+            
+        c_o_sec = calculate_fc_cost_per_second(p_module, p_nom, k_h2, k_fc, tau_fc, a0, a1, a2, alpha_deg)
         c_o = n_k * c_o_sec * (dt * lambda_scale)
-    else:
-        c_o = penalty_wall
         
     c_s = k_s * abs(n_k - n_prev)
     
@@ -78,7 +80,7 @@ class FuelCellBatteryPlant:
             soc_k=soc_k, n_k=n_k, n_prev=n_prev, p_fc_k=p_fc_k,
             p_d_micro=p_d_micro, dt=self.config.dt, e_bat=self.config.e_bat,
             c_bat_kwh=self.config.c_bat_kwh, n_eol=self.config.n_eol_cycles,
-            p_star=self.config.p_star, k_s=self.config.k_s, 
+            p_nom=self.config.p_nom,p_max=self.config.p_max, k_s=self.config.k_s, 
             penalty_wall=self.config.penalty_wall,
             k_h2=self.config.k_h2, k_fc=self.config.k_fc, 
             tau_fc=self.config.tau_fc, a0=self.config.a0, 

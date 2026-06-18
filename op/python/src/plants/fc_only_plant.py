@@ -6,7 +6,7 @@ class FuelCellOnlyPlant:
     """
     def __init__(self, config):
         self.config = config
-        self.p_star = config.p_star
+        self.p_nom = config.p_nom
         self.k_s = config.k_s
 
 def calculate_step_costs(self, P_d_step: float, n_step: int, n_prev: int) -> tuple[float, float]:
@@ -29,7 +29,7 @@ def calculate_step_costs(self, P_d_step: float, n_step: int, n_prev: int) -> tup
     cost_h2_sec = k_H2 * (m_H2 / 1000.0)
     
     # Degradation rate (fraction of life lost per second)
-    d_FC = (1.0 / (3600.0 * tau_FC)) * (1.0 + alpha_deg * ((p_module - self.p_star)**2) / (self.p_star**2))
+    d_FC = (1.0 / (3600.0 * tau_FC)) * (1.0 + alpha_deg * ((p_module - self.p_nom)**2) / (self.p_nom**2))
     cost_deg_sec = k_FC * d_FC
     
     # Total operational cost over the macro-step (dt * lambda_scale)

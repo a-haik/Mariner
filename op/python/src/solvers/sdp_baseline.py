@@ -5,7 +5,7 @@ from src.plants.physics import calculate_fc_cost_per_second
 
 @njit(cache=True)
 def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray, 
-                             transition_matrix: np.ndarray, k_s: float, p_star: float,
+                             transition_matrix: np.ndarray, k_s: float, p_nom: float, p_max: float,
                              dt_macro: float, k_h2: float, k_fc: float, tau_fc: float, 
                              a0: float, a1: float, a2: float, alpha_deg: float) -> np.ndarray:
     
@@ -21,8 +21,11 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
         for j in range(n_size):
             n_val = n_vals[j]
             if n_val > 0:
-                c_o_sec = calculate_fc_cost_per_second(p_val / n_val, p_star, k_h2, k_fc, tau_fc, a0, a1, a2, alpha_deg)
-                V[T - 1, i, j] = n_val * c_o_sec * dt_macro
+                if (p_val / n_val) > p_max:
+                    V[T - 1, i, j] = np.inf
+                else:
+                    c_o_sec = calculate_fc_cost_per_second(p_val / n_val, p_nom, k_h2, k_fc, tau_fc, a0, a1, a2, alpha_deg)
+                    V[T - 1, i, j] = n_val * c_o_sec * dt_macro
                 
     # 2. Backward Iteration
     for t in range(T - 2, -1, -1):
@@ -32,8 +35,11 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                 n_val = n_vals[j] # Following draft parity: evaluating on n(t-1)
                 
                 if n_val > 0:
-                    c_o_sec = calculate_fc_cost_per_second(p_val / n_val, p_star, k_h2, k_fc, tau_fc, a0, a1, a2, alpha_deg)
-                    C_o = n_val * c_o_sec * dt_macro
+                    if (p_val / n_val) > p_max:
+                        C_o = np.inf
+                    else:
+                        c_o_sec = calculate_fc_cost_per_second(p_val / n_val, p_nom, k_h2, k_fc, tau_fc, a0, a1, a2, alpha_deg)
+                        C_o = n_val * c_o_sec * dt_macro
                 else:
                     C_o = np.inf
                 
@@ -75,7 +81,7 @@ class BaselineSDPSolver:
             n_vals=c.n_vals,
             transition_matrix=self.mc_model['P'],
             k_s=c.k_s,
-            p_star=c.p_star,
+            p_nom=c.p_nom, p_max=c.p_max,
             dt_macro=float(c.Ts), 
             k_h2=c.k_h2, k_fc=c.k_fc, tau_fc=c.tau_fc, 
             a0=c.a0, a1=c.a1, a2=c.a2, alpha_deg=c.alpha_deg
