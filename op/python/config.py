@@ -10,8 +10,10 @@ class SimConfig:
     into a single source of truth[cite: 223].
     """
     # --- Plant & Cost Parameters ---
-    p_nom: float = 80.0           # Nominal power capacity per PEMFC module [kW] 
+    p_nom: float = 80.0            # Nominal power capacity per PEMFC module [kW] 
     p_max: float = 200.0           # Absolute maximum physical power per module [kW]
+    p_opt: float = 70              # Peak thermodynamic efficiency power output [kW]
+    eta_opt: float = 0.50          # Optimal fuel cell thermodynamic efficiency
     n0: int = 8                    # Initial number of active fuel cell modules 
     s_max: int = 4000              # Max on/off switches expected in lifetime
     k_h2: float = 4.0              # Cost of hydrogen fuel [€/kg] [cite: 225]
@@ -21,13 +23,14 @@ class SimConfig:
     a0: float = 55.8460e-3         # H2 flow coefficient [g/s] [cite: 226]
     a1: float = 10.0800e-3         # H2 flow coefficient [g/(s kW)] [cite: 226]
     a2: float = 0.0556e-3          # H2 flow coefficient [g/(s kW^2)] [cite: 226]
+    LHV: float = 33.3              # H2 lower heating vaelue [kWh/kg]
     
-    # k_s is marked as init=False since it is dynamically derived from Equation 23
+    # k_s is marked as init=False since it is derived from k_fc and s_max
     k_s: float = field(default=1.0, init=False) 
     
     # --- Legacy Simulation Parameters (Maintained for obsolete simulator.py) ---
     Ts: int = 300                  # Macro sample rate / block-mean aggregation window [s] [cite: 226]
-    num_runs: int = 1              # Number of sequential simulation runs [cite: 227]
+    num_runs: int= 1              # Number of sequential simulation runs [cite: 227]
     enable_plotting: bool = True   # [cite: 227]
     
     # --- Markov Chain (DTMC) Calibration Parameters ---
