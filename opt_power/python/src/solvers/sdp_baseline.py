@@ -1,29 +1,41 @@
-# src/solvers/sdp_baseline.py
+# python/src/solvers/sdp_baseline.py
 import numpy as np
 from numba import njit
+from config import SimConfig
 
 @njit(cache=True)
 def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray, 
-                             transition_matrix: np.ndarray, k_s: float, p_star: float) -> np.ndarray:
+                             transition_matrix: np.ndarray, Ts: float, 
+                             p_max: float, p_nom: float, k_fc: float, k_h2: float, 
+                             S_max: float, tau_fc: float, alpha_fc: float,
+                             a0: float, a1: float, a2: float) -> np.ndarray:
     """
     JIT-compiled backward induction routine solving the discrete Bellman recursion.
-    Replicates original MATLAB logic bug-for-bug to ensure numerical validation.
+    Updated with continuous time integration and true electrochemical formulas.
     """
     p_size = len(p_vals)
     n_size = len(n_vals)
     
     V = np.full((T, p_size, n_size), np.inf, dtype=np.float64)
     policy = np.zeros((T, p_size, n_size), dtype=np.int32)
+    k_s = k_fc / S_max
     
-    # 1. Exact MATLAB Terminal Condition (t = T-1 in Python)
+    # 1. Terminal Condition (t = T-1)
     for i in range(p_size):
         p_val = p_vals[i]
         for j in range(n_size):
             n_val = n_vals[j]
-            if n_val > 0:
-                V[T - 1, i, j] = ((p_val / p_star - n_val) ** 2) / n_val
-                
-    # 2. Exact MATLAB Backward Iteration (T-2 down to 0)
+            if n_val <= 0:
+                continue
+            
+            p_module = p_val / n_val
+            if p_module <= p_max:
+                m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
+                d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
+                c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
+                V[T - 1, i, j] = n_val * c_o_rate * Ts
+
+    # 2. Backward Iteration (T-2 down to 0)
     for t in range(T - 2, -1, -1):
         for i in range(p_size):
             p_val = p_vals[i]
@@ -31,44 +43,67 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                 n_val = n_vals[j]
                 if n_val <= 0:
                     continue
-              
-                C_o = ((p_val / p_star - n_val) ** 2) / n_val
+                
                 best_cost = np.inf
                 best_action_idx = 0  
                 
+                # Loop over possible ACTIONS (n_next)
                 for a_idx in range(n_size):
                     n_next = n_vals[a_idx]
-                    C_s = k_s * abs(n_next - n_val)
-                    
-                    exp_future = 0.0
-                    for i_next in range(p_size):
-                        exp_future += transition_matrix[i, i_next] * V[t + 1, i_next, a_idx]
+                    if n_next <= 0:
+                        continue
                         
-                    total_cost = C_o + C_s + exp_future
+                    # MATH FIX: Evaluate Operating Cost using the chosen action (n_next)
+                    p_module = p_val / n_next
+                    
+                    if p_module > p_max:
+                        total_cost = np.inf
+                    else:
+                        m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
+                        d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
+                        c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
+                        
+                        # MATH FIX: Integrate continuous rate over Ts
+                        C_o = n_next * c_o_rate * Ts
+                        C_s = k_s * abs(n_next - n_val)
+                        
+                        # Expected Future Cost
+                        exp_future = 0.0
+                        for i_next in range(p_size):
+                            exp_future += transition_matrix[i, i_next] * V[t + 1, i_next, a_idx]
+                            
+                        total_cost = C_o + C_s + exp_future
+                        
                     if total_cost < best_cost:
                         best_cost = total_cost
                         best_action_idx = a_idx  
+                        
                 V[t, i, j] = best_cost
                 policy[t, i, j] = best_action_idx
                 
     return policy
 
 class BaselineSDPSolver:
-    """
-    Orchestrates the offline generation of the Bellman policy matrix
-    without running any time-series simulation.
-    """
-    def __init__(self, config, mc_model):
+    """Orchestrates the offline generation of the Bellman policy matrix."""
+    def __init__(self, config: SimConfig, mc_model: dict):
         self.config = config
         self.mc_model = mc_model
 
     def compute_policy_matrix(self, horizon_length: int) -> np.ndarray:
-        """Generates and returns the lookup policy array."""
         return _solve_bellman_recursion(
             T=horizon_length,
             p_vals=self.mc_model['levels'],
             n_vals=self.config.n_vals,
             transition_matrix=self.mc_model['P'],
-            k_s=self.config.k_s,
-            p_star=self.config.p_star
+            Ts=float(self.config.Ts),
+            p_max=float(self.config.p_max),
+            p_nom=float(self.config.p_nom),
+            k_fc=float(self.config.k_fc),
+            k_h2=float(self.config.k_h2),
+            S_max=float(self.config.S_max),
+            tau_fc=float(self.config.tau_fc),
+            alpha_fc=float(self.config.alpha_fc),
+            a0=float(self.config.a0),
+            a1=float(self.config.a1),
+            a2=float(self.config.a2)
         )
