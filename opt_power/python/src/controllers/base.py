@@ -1,22 +1,22 @@
 # python/src/controllers/base.py
 from abc import ABC, abstractmethod
-import numpy as np
+from src.core import State, Action
 
 class ControlLaw(ABC):
     """
     Abstract base class establishing the contract layout for all power 
-    distribution laws. Mirrors ControlLaw.m.
+    distribution laws. Transitioned from full-horizon array processing 
+    to discrete step-by-step evaluation for continuous ZOH simulation.
     """
     @abstractmethod
-    def compute(self, P_d: np.ndarray, n0: int) -> np.ndarray:
+    def get_action(self, state: State) -> Action:
         """
-        Calculates the active module tracking array across a load timeline.
+        Evaluates the current physical state and returns the optimal control action.
         
         Parameters:
-            P_d: 1D array representing the continuous power demand profile.
-            n0: Scalar integer initialization specifying initial active modules.
+            state: The current State object (Demand, Previous Modules, SoC).
             
         Returns:
-            n: 1D integer array containing the module allocation choices.
+            action: The Action object (Modules to activate, Battery power split).
         """
         pass
