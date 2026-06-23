@@ -94,10 +94,10 @@ def load_and_cache_entire_fleet(config: SimConfig) -> dict[int, dict]:
     return fleet_cache
 
 
-def calibrate_markov_chain(data_dict: dict, config: SimConfig) -> dict:
+def calibrate_markov_chain(data_dict: dict, config: SimConfig, manual_edges=None) -> dict:
     """Standard orchestration routine for single continuous data sets."""
     ds_data = downsample_block_mean(data_dict['t'], data_dict['Pd'], config.Ts, align='t0')
-    mc_model = fit_dtmc(ds_data['Pd'], config.n_states, config.alpha)
+    mc_model = fit_dtmc(ds_data['Pd'], config.n_states, config.alpha_mc, manual_edges=manual_edges)
     mc_model['Delta'] = config.Ts  
     return mc_model
 
@@ -174,24 +174,12 @@ def downsample_block_mean(t: np.ndarray, y: np.ndarray, t_sec: int, align: str =
 
 
 @njit(cache=True)
-def _fit_dtmc_worker(segments: numba.typed.List, m_states: int, alpha: float):
+def _fit_dtmc_worker(segments: numba.typed.List, m_states: int, alpha: float, edges: np.ndarray):
     """
     Private JIT-compiled multi-segment validation kernel.
-    Accumulates transitions segment-by-segment to prevent midnight boundary errors.
+    Edges are now injected to support manual grid resolution overrides.
     """
-    total_len = 0
-    for seg in segments:
-        total_len += len(seg)
-        
-    all_samples = np.zeros(total_len, dtype=np.float64)
-    cursor = 0
-    for seg in segments:
-        all_samples[cursor:cursor+len(seg)] = seg
-        cursor += len(seg)
-        
-    edges = _make_edges_quantile_numba(all_samples, m_states)
     N = np.zeros((m_states, m_states), dtype=np.float64)
-    
     for seg in segments:
         if len(seg) < 2:
             continue
@@ -215,7 +203,7 @@ def _fit_dtmc_worker(segments: numba.typed.List, m_states: int, alpha: float):
             P[r_idx, :] = 1.0 / m_states
         else:
             P[r_idx, :] = P[r_idx, :] / row_sum
-        
+            
     A = np.zeros((m_states + 1, m_states))
     A[:m_states, :] = P.T - np.eye(m_states)
     A[m_states, :] = 1.0
@@ -230,22 +218,38 @@ def _fit_dtmc_worker(segments: numba.typed.List, m_states: int, alpha: float):
     for idx in range(m_states):
         levels[idx] = (edges[idx] + edges[idx+1]) / 2.0
         
-    return P, N, stationary_pi, edges, levels
+    return P, N, stationary_pi, levels
 
 
-def fit_dtmc(power_samples, m_states: int, alpha: float = 0.5) -> dict:
+def fit_dtmc(power_samples, m_states: int, alpha: float = 0.5, manual_edges: np.ndarray = None) -> dict:
     """
-    Public segment-aware interface.
-    Accepts either a single np.ndarray or a list[np.ndarray] for cross-validation gaps.
+    Public segment-aware interface. 
+    Accepts manual_edges to override automatic quantile binning for discretization studies.
     """
     numba_list = numba.typed.List()
+    total_len = 0
     if isinstance(power_samples, np.ndarray):
-        numba_list.append(power_samples.flatten())
+        flat_samples = power_samples.flatten()
+        numba_list.append(flat_samples)
+        total_len += len(flat_samples)
     elif isinstance(power_samples, list):
         for seg in power_samples:
-            numba_list.append(seg.flatten())
+            flat_samples = seg.flatten()
+            numba_list.append(flat_samples)
+            total_len += len(flat_samples)
     else:
         raise TypeError("power_samples must be an ndarray or list of ndarrays")
         
-    P, N, stationary_pi, edges, levels = _fit_dtmc_worker(numba_list, m_states, alpha)
+    if manual_edges is not None:
+        edges = np.array(manual_edges, dtype=np.float64)
+        m_states = len(edges) - 1
+    else:
+        all_samples = np.zeros(total_len, dtype=np.float64)
+        cursor = 0
+        for seg in numba_list:
+            all_samples[cursor:cursor+len(seg)] = seg
+            cursor += len(seg)
+        edges = _make_edges_quantile_numba(all_samples, m_states)
+        
+    P, N, stationary_pi, levels = _fit_dtmc_worker(numba_list, m_states, alpha, edges)
     return {'P': P, 'N': N, 'pi': stationary_pi, 'edges': edges, 'levels': levels}
