@@ -1,0 +1,8 @@
+# python/requirements.txt
+numpy>=2.2.2,<2.4.0
+scipy>=1.12.0
+pandas>=2.2.0
+matplotlib>=3.8.0
+numba>=0.62.0
+mat_io>=0.1.0
+ipykernel
