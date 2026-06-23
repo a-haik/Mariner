@@ -13,7 +13,7 @@ class SimConfig:
     p_nom: float = 80.0            # Nominal power capacity per PEMFC module [kW] 
     p_max: float = 200.0           # Absolute maximum physical power per module [kW]
     p_opt: float = 70              # Peak thermodynamic efficiency power output [kW]
-    eta_opt: float = 0.50          # Optimal fuel cell thermodynamic efficiency
+    eta_opt: float = 0.60          # Optimal fuel cell thermodynamic efficiency
     n0: int = 8                    # Initial number of active fuel cell modules 
     s_max: int = 4000              # Max on/off switches expected in lifetime
     k_h2: float = 4.0              # Cost of hydrogen fuel [€/kg] [cite: 225]
