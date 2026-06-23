@@ -6,36 +6,68 @@ import numpy as np
 class SimConfig:
     """
     Unified configuration parameters for the MARINER Optimal Power Distribution solver.
-    Consolidates parameters across original exploratory scripts into a single source of truth.
+    Upgraded to support continuous-time physical simulation and Hybrid FC/Battery setups.
     """
-    # --- Plant & Cost Parameters ---
-    k_s: float = 1.0           # Switching cost coefficient (degradation penalty)
-    p_star: float = 200.0      # Reference power capacity per PEMFC module [kW]
+    # =========================================================================
+    # 1. TIME DOMAINS & DISCRETIZATION
+    # =========================================================================
+    dt_sim: int = 1            # High-frequency physical simulation step [s]
+    Ts: int = 300              # Macro-control decision interval / block-mean window [s]
+    
+    # =========================================================================
+    # 2. FUEL CELL PHYSICAL PARAMETERS
+    # =========================================================================
+    p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
+    p_nom: float = 80.0        # Nominal optimal load per PEMFC module [kW]
     n0: int = 5                # Initial number of active fuel cell modules
     
-    # --- Simulation Horizon Parameters ---
-    Ts: int = 300              # Macro sample rate / block-mean aggregation window [s]
-    num_runs: int = 1          # Number of sequential simulation runs
-    enable_plotting: bool = True #
+    # Degradation & Cost Coefficients (From Table 1)
+    tau_fc: float = 50000.0    # Expected service life at steady nominal operation [Hours]
+    S_max: float = 4000.0      # Maximum start/stop cycles before failure
+    k_fc: float = 75000.0      # FC module replacement cost [€]
+    k_h2: float = 4.0          # Hydrogen fuel cost [€/kg]
+    alpha_fc: float = 1.0      # Degradation penalty factor for off-nominal loads
     
-    # --- Markov Chain (DTMC) Calibration Parameters ---
-    n_states: int = 8         # Number of discrete load levels (M=16 in data execution block)
-    alpha: float = 0.5         # Dirichlet smoothing parameter for sparse transition count rows
+    # Hydrogen Consumption Curve Coefficients (ṁ_H2 = a0 + a1*p + a2*p^2)
+    a0: float = 55.8460e-3     # [g/s]
+    a1: float = 10.0800e-3     # [g/(s*kW)]
+    a2: float = 0.0556e-3      # [g/(s*kW^2)]
     
-    # --- Control Action Space ---
-    # Using field(default_factory=...) to generate mutable NumPy structures safely within a dataclass
+    # =========================================================================
+    # 3. BATTERY PHYSICAL PARAMETERS
+    # =========================================================================
+    C_bat: float = 25.0        # Nominal capacity of the lithium-ion battery pack [kWh]
+    c_bat_kwh: float = 125.0   # Replacement cost per kWh [€/kWh]
+    soc_min: float = 0.2       # Minimum safe State of Charge (20%)
+    soc_max: float = 0.8       # Maximum safe State of Charge (80%)
+    soc_initial: float = 0.7   # Starting State of Charge (70%)
+    
+    # =========================================================================
+    # 4. MARKOV CHAIN (DTMC) CALIBRATION
+    # =========================================================================
+    n_states: int = 8          # Number of discrete load levels
+    alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
+    
+    # =========================================================================
+    # 5. CONTROL ACTION SPACE
+    # =========================================================================
     n_vals: np.ndarray = field(
-        default_factory=lambda: np.arange(1, 11, dtype=np.int32) # Invariant action space: [1, 2, ..., 10]
+        default_factory=lambda: np.arange(1, 11, dtype=np.int32)
     )
-    
-    # --- Synthetic Profile Parameters (Backward Compatibility) ---
-    sigma: float = 0.5         # Standard deviation parameter for synthetic Gaussian random walks
 
     def __post_init__(self):
         """Sanity check validations for physical constraints."""
-        if self.p_star <= 0:
-            raise ValueError("Reference power p_star must be strictly positive.")
+        if self.p_max <= 0 or self.p_nom <= 0:
+            raise ValueError("Power limits p_max and p_nom must be strictly positive.")
+            
         if self.n0 not in self.n_vals:
             raise ValueError(f"Initial module state n0={self.n0} must fall within action space n_vals.")
-        if self.alpha < 0:
-            raise ValueError("Dirichlet smoothing coefficient alpha cannot be negative.")
+            
+        if self.alpha_mc < 0:
+            raise ValueError("Dirichlet smoothing coefficient alpha_mc cannot be negative.")
+            
+        if self.Ts % self.dt_sim != 0:
+            raise ValueError("Macro time step Ts must be a perfect multiple of dt_sim.")
+            
+        if not (0.0 <= self.soc_min < self.soc_max <= 1.0):
+            raise ValueError("Invalid battery SoC boundary definitions.")
