@@ -1,55 +1,69 @@
-# src/simulator.py
+# python/src/simulator.py
 import numpy as np
 from config import SimConfig
+from src.core import State, Action
 
 class Simulator:
     """
-    Unified execution engine that coordinates the interaction between
-    an online Controller strategy and a physical Plant model.
+    Time-decoupled execution engine for the MARINER Optimal Power Distribution solver.
+    Implements a Zero-Order Hold (ZOH) loop to evaluate continuous high-frequency 
+    physical consequences against macro-step (e.g., 300s) control decisions.
     """
-    def __init__(self, config: SimConfig, P_d: np.ndarray, plant):
+    def __init__(self, config: SimConfig, P_d_continuous: np.ndarray, plant):
         self.config = config
-        self.P_d = P_d.flatten()
-        self.T = len(self.P_d)
-        self.plant = plant  # Injected plant hardware abstraction layer
+        self.P_d = P_d_continuous.flatten()
+        self.T_sim = len(self.P_d)
+        self.plant = plant
         
-        # Trajectory historical monitoring caches
-        self.n = None
-        self.C_o = None
-        self.C_s = None
-        self.C = None
+        # Flexible telemetry dictionary to replace hardcoded arrays
+        self.history = {}
 
     def run(self, controller) -> float:
         """
-        Drives the sequential execution loop step-by-step.
+        Drives the sequential ZOH execution loop.
         """
-        # 1. Obtain the full sequence of module decisions from the controller
-        n_decisions = controller.compute(self.P_d, self.config.n0)
+        # Initialize tracking history
+        self.history = {'time': [], 'P_d': []}
         
-        # 2. Pre-allocate tracking vectors
-        C_o_vec = np.zeros(self.T)
-        C_s_vec = np.zeros(self.T)
+        # Initialize the physical state
+        current_state = State(
+            P_d=self.P_d[0], 
+            n_prev=self.config.n0, 
+            soc=self.config.soc_initial
+        )
         
-        # 3. Step through time tracking system interactions
-        n_prev = self.config.n0
-        for t in range(self.T):
-            n_curr = n_decisions[t]
+        # Placeholder for the ZOH control action
+        current_action = None
+        
+        for t in range(self.T_sim):
+            time_sec = t * self.config.dt_sim
             
-            # Request physical consequences from our hardware plant wrapper
-            c_o, c_s = self.plant.calculate_step_costs(self.P_d[t], n_curr, n_prev)
+            # 1. Update the state with the true high-frequency demand
+            current_state.P_d = self.P_d[t]
+            self.history['time'].append(time_sec)
+            self.history['P_d'].append(self.P_d[t])
             
-            # In the baseline MATLAB code, the initial cycle cost at t=0 is forced to 0
-            if t == 0:
-                c_s = 0.0
+            # 2. PING THE CONTROLLER (Macro Time Step Only)
+            if time_sec % self.config.Ts == 0:
+                current_action = controller.get_action(current_state)
                 
-            C_o_vec[t] = c_o
-            C_s_vec[t] = c_s
-            n_prev = n_curr
+                # Bypass switching cost penalty for the initial startup at t=0
+                if t == 0:
+                    current_state.n_prev = current_action.n_modules
+
+            # 3. STEP THE PLANT (High-Frequency Physical Simulation)
+            current_state, telemetry = self.plant.step(
+                state=current_state, 
+                action=current_action, 
+                dt=float(self.config.dt_sim)
+            )
             
-        # Save tracking data arrays for plotting utilities
-        self.n = n_decisions
-        self.C_o = C_o_vec
-        self.C_s = C_s_vec
-        self.C = C_o_vec + C_s_vec
-        
-        return float(np.sum(self.C))
+            # 4. LOG TELEMETRY (Dynamic mapping)
+            for key, value in telemetry.items():
+                if key not in self.history:
+                    self.history[key] = []
+                self.history[key].append(value)
+                
+        # The total simulation cost is the sum of all accumulated high-frequency costs
+        total_cost = sum(self.history.get('cost_total', [0.0]))
+        return float(total_cost)
