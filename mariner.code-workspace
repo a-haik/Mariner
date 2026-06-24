@@ -10,15 +10,15 @@
     },
     {
       "name": "Optimal Power (Clean)",
-      "path": "opt_power/python"
+      "path": "opt_power"
     },
-        {
+    {
       "name": "Optimal Power (Messy)",
-      "path": "op/python"
+      "path": "op"
     }
   ],
   "settings": {
     "python.terminal.activateEnvironment": true,
-    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe"
+    "python.defaultInterpreterPath": "${workspaceFolder}/python/.venv/Scripts/python.exe"
   }
 }
