@@ -1,6 +1,5 @@
 # python/main.py
 import os
-import numpy as np
 from config import SimConfig
 from src.data_processing import load_and_interpolate_sov_data, calibrate_markov_chain, downsample_block_mean
 from src.simulator import Simulator
@@ -74,8 +73,8 @@ def main():
         print(f"-> {controller_names[idx]:<18} | Total Cost: {total_cost:10.2f} €")
         
     print("\nSaving performance summaries to 'figures/' workspace directory...")
-    plot_dynamic_history(simulators, controller_names)
-    plot_cost_comparison(simulators, controller_names)
+    plot_dynamic_history(simulators, controller_names, save_plot=True)
+    plot_cost_comparison(simulators, controller_names, save_plot=True)
     print("-> Visualization complete. You are clear to begin hybrid battery development.")
 
 if __name__ == '__main__':

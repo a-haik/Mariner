@@ -17,9 +17,9 @@ class SimConfig:
     # =========================================================================
     # 2. FUEL CELL PHYSICAL PARAMETERS
     # =========================================================================
-    p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
-    p_nom: float = 80.0        # Nominal optimal load per PEMFC module [kW]
-    n0: int = 5                # Initial number of active fuel cell modules
+    p_max: float = 500.0       # Absolute ceiling power per PEMFC module [kW]
+    p_nom: float = 200.0        # Nominal optimal load per PEMFC module [kW]
+    n0: int = 2               # Initial number of active fuel cell modules
     
     # Degradation & Cost Coefficients (From Table 1)
     tau_fc: float = 50000.0    # Expected service life at steady nominal operation [Hours]
@@ -45,14 +45,14 @@ class SimConfig:
     # =========================================================================
     # 4. MARKOV CHAIN (DTMC) CALIBRATION
     # =========================================================================
-    n_states: int = 8          # Number of discrete load levels
+    n_states: int = 16          # Number of discrete load levels
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
     
     # =========================================================================
     # 5. CONTROL ACTION SPACE
     # =========================================================================
     n_vals: np.ndarray = field(
-        default_factory=lambda: np.arange(1, 11, dtype=np.int32)
+        default_factory=lambda: np.arange(1, 5, dtype=np.int32)
     )
 
     def __post_init__(self):

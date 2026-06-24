@@ -1,4 +1,5 @@
 # python/src/utils/evaluation.py
+import time
 import numpy as np
 import pandas as pd
 from src.data_processing import downsample_block_mean, fit_dtmc
@@ -44,19 +45,28 @@ class VoyageBenchmarker:
         """
         Instantiates a completely fresh physical plant and controller to prevent 
         historical states (like transient penalties) from bleeding across runs.
+        Tracks computation time for the offline solution + online simulation.
         """
-        # The factory yields a fresh controller and a fresh plant
+        # Start the timing clock (perf_counter is the most accurate for benchmarking)
+        start_time = time.perf_counter()
+        
+        # The factory yields a fresh controller (and computes the Bellman policy if SDP) and a fresh plant
         controller, plant = approach_factory(self.config, mc_model, horizon_length)
         
         sim = Simulator(self.config, test_pd, plant)
         sim.run(controller)
+        
+        # Stop the timing clock
+        end_time = time.perf_counter()
+        calc_time = end_time - start_time
         
         return {
             'Total Cost [€]': sum(sim.history.get('cost_total', [0.0])),
             'Operating Cost [€]': sum(sim.history.get('cost_o', [0.0])),
             'Switching Cost [€]': sum(sim.history.get('cost_s', [0.0])),
             'Transient Cost [€]': sum(sim.history.get('cost_trans', [0.0])),
-            'Battery Cost [€]': sum(sim.history.get('cost_bat', [0.0]))
+            'Battery Cost [€]': sum(sim.history.get('cost_bat', [0.0])),
+            'Computation Time [s]': calc_time
         }
 
     def compare_approaches(self, approaches: dict, train_days: list, test_day: int) -> pd.DataFrame:
