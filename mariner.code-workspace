@@ -1,0 +1,24 @@
+{
+  "folders": [
+    {
+      "name": "Scoprio",
+      "path": "scorpio"
+    },
+    {
+      "name": "Kiara",
+      "path": "kiara"
+    },
+    {
+      "name": "Optimal Power (Clean)",
+      "path": "opt_power/python"
+    },
+        {
+      "name": "Optimal Power (Messy)",
+      "path": "op/python"
+    }
+  ],
+  "settings": {
+    "python.terminal.activateEnvironment": true,
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe"
+  }
+}
