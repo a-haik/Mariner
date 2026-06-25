@@ -1,6 +1,7 @@
 # python/src/solvers/sdp_baseline.py
 import numpy as np
 from numba import njit
+from typing import Tuple
 from config import SimConfig
 
 @njit(cache=True)
@@ -8,10 +9,11 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                              transition_matrix: np.ndarray, Ts: float, 
                              p_max: float, p_nom: float, k_fc: float, k_h2: float, 
                              S_max: float, tau_fc: float, alpha_fc: float,
-                             a0: float, a1: float, a2: float) -> np.ndarray:
+                             a0: float, a1: float, a2: float):
     """
     JIT-compiled backward induction routine solving the discrete Bellman recursion.
-    Updated with continuous time integration and true electrochemical formulas.
+    Updated with continuous time integration, true electrochemical formulas, 
+    and highly optimized expectation caching.
     """
     p_size = len(p_vals)
     n_size = len(n_vals)
@@ -20,6 +22,7 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
     policy = np.zeros((T, p_size, n_size), dtype=np.int32)
     k_s = k_fc / S_max
 
+    # Cache for the Expected Future Cost optimization
     exp_future_cache = np.empty(n_size, dtype=np.float64)
     
     # 1. Terminal Condition (t = T-1)
@@ -42,6 +45,7 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
         for i in range(p_size):
             p_val = p_vals[i]
 
+            # OPTIMIZATION: Calculate Expected Future Cost for all possible NEXT actions
             for a_idx in range(n_size):
                 if n_vals[a_idx] <= 0:
                     continue
@@ -49,8 +53,8 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                 for i_next in range(p_size):
                     s += transition_matrix[i, i_next] * V[t + 1, i_next, a_idx]
                 exp_future_cache[a_idx] = s
-
             
+            # Loop over current states
             for j in range(n_size):
                 n_val = n_vals[j]
                 if n_val <= 0:
@@ -65,7 +69,6 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                     if n_next <= 0:
                         continue
                         
-                    # MATH FIX: Evaluate Operating Cost using the chosen action (n_next)
                     p_module = p_val / n_next
                     
                     if p_module > p_max:
@@ -77,7 +80,6 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                         d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
                         c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
                         
-                        # MATH FIX: Integrate continuous rate over Ts
                         C_o = n_next * c_o_rate * Ts
                         C_s = k_s * abs(n_next - n_val)
                             
@@ -90,15 +92,20 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                 V[t, i, j] = best_cost
                 policy[t, i, j] = best_action_idx
                 
-    return policy
+    return policy, V
 
 class BaselineSDPSolver:
-    """Orchestrates the offline generation of the Bellman policy matrix."""
+    """Orchestrates the offline generation of the Bellman matrices."""
     def __init__(self, config: SimConfig, mc_model: dict):
         self.config = config
         self.mc_model = mc_model
 
-    def compute_policy_matrix(self, horizon_length: int) -> np.ndarray:
+    def compute_solution(self, horizon_length: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Returns:
+            policy_matrix: (T, P_size, n_size) array of optimal module counts.
+            V_matrix: (T, P_size, n_size) array of expected cumulative costs.
+        """
         return _solve_bellman_recursion(
             T=horizon_length,
             p_vals=self.mc_model['levels'],
