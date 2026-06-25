@@ -19,6 +19,8 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
     V = np.full((T, p_size, n_size), np.inf, dtype=np.float64)
     policy = np.zeros((T, p_size, n_size), dtype=np.int32)
     k_s = k_fc / S_max
+
+    exp_future_cache = np.empty(n_size, dtype=np.float64)
     
     # 1. Terminal Condition (t = T-1)
     for i in range(p_size):
@@ -39,6 +41,16 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
     for t in range(T - 2, -1, -1):
         for i in range(p_size):
             p_val = p_vals[i]
+
+            for a_idx in range(n_size):
+                if n_vals[a_idx] <= 0:
+                    continue
+                s = 0.0
+                for i_next in range(p_size):
+                    s += transition_matrix[i, i_next] * V[t + 1, i_next, a_idx]
+                exp_future_cache[a_idx] = s
+
+            
             for j in range(n_size):
                 n_val = n_vals[j]
                 if n_val <= 0:
@@ -59,6 +71,8 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                     if p_module > p_max:
                         total_cost = np.inf
                     else:
+                        exp_future = exp_future_cache[a_idx]
+
                         m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
                         d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
                         c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
@@ -66,11 +80,6 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                         # MATH FIX: Integrate continuous rate over Ts
                         C_o = n_next * c_o_rate * Ts
                         C_s = k_s * abs(n_next - n_val)
-                        
-                        # Expected Future Cost
-                        exp_future = 0.0
-                        for i_next in range(p_size):
-                            exp_future += transition_matrix[i, i_next] * V[t + 1, i_next, a_idx]
                             
                         total_cost = C_o + C_s + exp_future
                         
