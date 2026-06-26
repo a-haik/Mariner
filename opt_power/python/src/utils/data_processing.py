@@ -1,10 +1,10 @@
-# python/src/data_processing.py
+# python/src/utils/data_processing.py
 import os
 import numpy as np
 import pandas as pd
 import numba
 from numba import njit
-from config import SimConfig
+from src.config import SimConfig
 from matio import load_from_mat
 
 # ==============================================================================

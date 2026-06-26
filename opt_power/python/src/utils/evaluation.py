@@ -2,7 +2,7 @@
 import time
 import numpy as np
 import pandas as pd
-from src.data_processing import downsample_block_mean, fit_dtmc
+from src.utils.data_processing import downsample_block_mean, fit_dtmc
 from src.simulator import Simulator
 
 class VoyageBenchmarker:

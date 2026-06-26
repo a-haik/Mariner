@@ -1,4 +1,4 @@
-# python/src/plotting.py
+# python/src/utils/plotting.py
 import os
 import numpy as np
 import pandas as pd

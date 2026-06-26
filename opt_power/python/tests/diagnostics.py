@@ -1,7 +1,7 @@
 # diagnostics.py
 import unittest
 import numpy as np
-from config import SimConfig
+from src.config import SimConfig
 from src.core import State, Action
 from src.plants.fc_only_plant import FuelCellOnlyPlant
 from src.solvers.sdp_baseline import BaselineSDPSolver

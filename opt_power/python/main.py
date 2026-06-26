@@ -1,7 +1,7 @@
 # python/main.py
 import os
-from config import SimConfig
-from src.data_processing import load_and_interpolate_sov_data, calibrate_markov_chain, downsample_block_mean
+from src.config import SimConfig
+from src.utils.data_processing import load_and_interpolate_sov_data, calibrate_markov_chain, downsample_block_mean
 from src.simulator import Simulator
 from src.plants.fc_only_plant import FuelCellOnlyPlant
 from src.plants.hybrid_plant import HybridPlant
@@ -9,7 +9,7 @@ from src.solvers.sdp_baseline import BaselineSDPSolver
 from src.controllers.constant import ConstantControl
 from src.controllers.threshold import ThresholdControl
 from src.controllers.stochastic import StochasticControl
-from src.plotting import plot_dynamic_history, plot_cost_comparison
+from src.utils.plotting import plot_dynamic_history, plot_cost_comparison
 
 def main():
     print("=" * 70)

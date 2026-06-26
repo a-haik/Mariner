@@ -1,7 +1,7 @@
 # python/src/controllers/threshold.py
 from src.controllers.base import ControlLaw
 from src.core import State, Action
-from config import SimConfig
+from src.config import SimConfig
 
 class ThresholdControl(ControlLaw):
     """

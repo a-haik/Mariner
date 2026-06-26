@@ -1,7 +1,7 @@
 # python/src/controllers/constant.py
 from src.controllers.base import ControlLaw
 from src.core import State, Action
-from config import SimConfig
+from src.config import SimConfig
 
 class ConstantControl(ControlLaw):
     """

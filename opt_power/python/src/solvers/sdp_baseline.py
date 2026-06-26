@@ -2,7 +2,7 @@
 import numpy as np
 from numba import njit
 from typing import Tuple
-from config import SimConfig
+from src.config import SimConfig
 
 @njit(cache=True)
 def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray, 

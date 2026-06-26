@@ -1,6 +1,6 @@
 # python/src/simulator.py
 import numpy as np
-from config import SimConfig
+from src.config import SimConfig
 from src.core import State
 
 class Simulator:

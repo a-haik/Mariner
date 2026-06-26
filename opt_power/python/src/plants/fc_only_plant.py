@@ -1,6 +1,6 @@
 # python/src/plants/fc_only_plant.py
 from typing import Tuple, Dict
-from config import SimConfig
+from src.config import SimConfig
 from src.core import State, Action
 from src.plants.base import BasePlant
 
