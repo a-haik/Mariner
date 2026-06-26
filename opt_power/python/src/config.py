@@ -36,21 +36,21 @@ class SimConfig:
     # =========================================================================
     # 3. BATTERY PHYSICAL PARAMETERS (Hybrid Additions)
     # =========================================================================
-    C_bat: float = 25.0        # Nominal capacity of the battery pack [kWh]
+    C_bat: float = 1000.0        # Nominal capacity of the battery pack [kWh]
     c_bat_kwh: float = 125.0   # Replacement cost per kWh [€/kWh]
     soc_min: float = 0.2       # Minimum safe State of Charge (20%)
     soc_max: float = 0.8       # Maximum safe State of Charge (80%)
-    soc_initial: float = 0.7   # Starting State of Charge (70%)
+    soc_initial: float = 0.5   # Starting State of Charge (70%)
     
-    p_batt_max: float = 50.0   # Maximum discharge limit [kW] (Assumed 2C rate)
-    p_batt_min: float = -50.0  # Maximum charge limit [kW]
+    p_batt_max: float = 500.0   # Maximum discharge limit [kW] (Assumed 2C rate)
+    p_batt_min: float = -500.0  # Maximum charge limit [kW]
     n_cycles_rated: float = 3000.0 # Manufacturer rated cycle life
     dod_rated: float = 0.8     # Depth of discharge for rated cycles
     
     # =========================================================================
     # 4. MARKOV CHAIN & GRID CALIBRATION
     # =========================================================================
-    n_states: int = 16         # Number of discrete load levels (Demand Grid)
+    n_states: int = 8         # Number of discrete load levels (Demand Grid)
     soc_states: int = 21       # Grid resolution for SoC dimension (SoC Grid)
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
     
