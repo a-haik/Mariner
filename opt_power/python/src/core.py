@@ -13,3 +13,4 @@ class Action:
     """Represents the control decision requested by the EMS."""
     n_modules: int      # Discrete modules to turn on
     p_batt: float = 0.0 # Power requested from the battery [kW]
+    p_fc: float = 0.0   # Locked Fuel Cell power setpoint [kW] (Added for Hybrid tracking)
