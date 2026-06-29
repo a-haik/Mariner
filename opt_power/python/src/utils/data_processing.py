@@ -97,7 +97,7 @@ def load_and_cache_entire_fleet(config: SimConfig) -> dict[int, dict]:
 def calibrate_markov_chain(data_dict: dict, config: SimConfig, manual_edges=None) -> dict:
     """Standard orchestration routine for single continuous data sets."""
     ds_data = downsample_block_mean(data_dict['t'], data_dict['Pd'], config.Ts, align='t0')
-    mc_model = fit_dtmc(ds_data['Pd'], config.n_states, config.alpha_mc, manual_edges=manual_edges)
+    mc_model = fit_dtmc(ds_data['Pd'], config.N_pd, config.alpha_mc, manual_edges=manual_edges)
     mc_model['Delta'] = config.Ts  
     return mc_model
 

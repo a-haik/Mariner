@@ -28,7 +28,7 @@ def _get_c_min_kwh(p_max: float, p_nom: float, tau_fc: float, alpha_fc: float,
 
 @njit(cache=True)
 def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
-                          p_batt_vals: np.ndarray, transition_matrix: np.ndarray, Ts: float, 
+                          pb_vals: np.ndarray, transition_matrix: np.ndarray, Ts: float, 
                           p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                           tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
                           C_bat: float, C_rep: float, E_life: float, 
@@ -39,7 +39,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
     p_size = len(p_vals)
     n_size = len(n_vals)
     soc_size = len(soc_vals)
-    pbatt_size = len(p_batt_vals)
+    pbatt_size = len(pb_vals)
     
     # 4D Value and Dual-Policy Matrices
     V = np.full((T, p_size, n_size, soc_size), np.inf, dtype=np.float64)
@@ -117,7 +117,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                             continue
                             
                         for pb_idx in range(pbatt_size):
-                            pbatt = p_batt_vals[pb_idx]
+                            pbatt = pb_vals[pb_idx]
                             
                             # 1. State Kinematics (Project SoC)
                             soc_next = soc_val - (pbatt * (Ts / 3600.0)) / C_bat
@@ -162,11 +162,9 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
 
 class HybridSDPSolver:
     """Orchestrates the offline generation of the 4D Bellman matrices."""
-    def __init__(self, config: SimConfig, mc_model: dict, pbatt_resolution: int = 51):
+    def __init__(self, config: SimConfig, mc_model: dict):
         self.config = config
         self.mc_model = mc_model
-        # Discretize the action space for the solver search
-        self.p_batt_vals = np.linspace(config.p_batt_min, config.p_batt_max, pbatt_resolution)
 
     def compute_solution(self, horizon_length: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -180,7 +178,7 @@ class HybridSDPSolver:
             p_vals=self.mc_model['levels'],
             n_vals=self.config.n_vals,
             soc_vals=self.config.soc_vals,
-            p_batt_vals=self.p_batt_vals,
+            pb_vals=self.config.pb_vals,
             transition_matrix=self.mc_model['P'],
             Ts=float(self.config.Ts),
             p_max=float(self.config.p_max),

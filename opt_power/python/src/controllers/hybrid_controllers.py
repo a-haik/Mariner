@@ -90,7 +90,7 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
                           p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                           tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
                           C_bat: float, C_rep: float, E_life: float, soc_min: float, soc_max: float,
-                          p_batt_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
+                          pb_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
                           transition_row: np.ndarray, V_next: np.ndarray):
     """JIT Engine evaluating true continuous cost + interpolated expected future cost."""
     
@@ -115,7 +115,7 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
     # Grid search over action space using continuous current reality
     for a_idx in range(n_size):
         n_next = n_vals[a_idx]
-        for pbatt in p_batt_vals:
+        for pbatt in pb_vals:
             # Kinematics
             soc_next = soc_real - (pbatt * (Ts / 3600.0)) / C_bat
             if soc_next < soc_min or soc_next > soc_max:
@@ -155,12 +155,11 @@ class LookaheadControl(ControlLaw):
     exact continuous state (P_d, SoC), using the Value Matrix only for future expectations.
     """
     def __init__(self, config: SimConfig, p_grid: np.ndarray, transition_matrix: np.ndarray, 
-                 V_matrix: np.ndarray, pbatt_resolution: int = 51):
+                 V_matrix: np.ndarray):
         self.config = config
         self.p_grid = p_grid
         self.transition_matrix = transition_matrix
         self.V = V_matrix
-        self.p_batt_vals = np.linspace(config.p_batt_min, config.p_batt_max, pbatt_resolution)
         self.current_step = 0
 
     def get_action(self, state: State) -> Action:
@@ -184,7 +183,7 @@ class LookaheadControl(ControlLaw):
             alpha_fc=float(self.config.alpha_fc), a0=float(self.config.a0), a1=float(self.config.a1),
             a2=float(self.config.a2), C_bat=float(self.config.C_bat), C_rep=float(self.config.C_rep),
             E_life=float(self.config.E_life), soc_min=float(self.config.soc_min), soc_max=float(self.config.soc_max),
-            p_batt_vals=self.p_batt_vals, n_vals=self.config.n_vals, soc_vals=self.config.soc_vals,
+            pb_vals=self.config.pb_vals, n_vals=self.config.n_vals, soc_vals=self.config.soc_vals,
             transition_row=transition_row, V_next=V_next
         )
 

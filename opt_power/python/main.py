@@ -33,7 +33,7 @@ def main():
     print("\nExecuting Step 3: Loading and calibrating Markov chain from SOV telemetry...")
     raw_training_data = load_and_interpolate_sov_data(training_files)
     mc_model = calibrate_markov_chain(raw_training_data, config)
-    print(f"-> Calibration successful. State space levels derived: {config.n_states} tracking zones.")
+    print(f"-> Calibration successful. State space levels derived: {config.N_Pd} tracking zones.")
     
     print("\nExecuting Step 4: Isolating validation tracking trajectory (Day: 08-Feb)...")
     validation_file = ['../data/SOV_08-Feb-2023.mat']

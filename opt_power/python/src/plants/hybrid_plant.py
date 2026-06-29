@@ -23,7 +23,7 @@ class HybridPlant(BasePlant):
 
         # 3. Hardware Limits & Battery Fail-safes
         # Clamp to the physical C-rate boundaries
-        p_batt_real = max(self.config.p_batt_min, min(self.config.p_batt_max, p_batt_real))
+        p_batt_real = max(self.config.pb_min, min(self.config.pb_max, p_batt_real))
 
         # SoC Limits (Prevent overcharge / overdischarge)
         if state.soc <= self.config.soc_min and p_batt_real > 0:

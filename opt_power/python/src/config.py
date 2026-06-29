@@ -42,24 +42,21 @@ class SimConfig:
     soc_max: float = 0.8       # Maximum safe State of Charge (80%)
     soc_initial: float = 0.5   # Starting State of Charge (70%)
     
-    p_batt_max: float = 500.0   # Maximum discharge limit [kW] (Assumed 2C rate)
-    p_batt_min: float = -500.0  # Maximum charge limit [kW]
+    pb_max: float = 500.0   # Maximum discharge limit [kW] (Assumed 2C rate)
+    pb_min: float = -500.0  # Maximum charge limit [kW]
     n_cycles_rated: float = 3000.0 # Manufacturer rated cycle life
     dod_rated: float = 0.8     # Depth of discharge for rated cycles
     
     # =========================================================================
     # 4. MARKOV CHAIN & GRID CALIBRATION
     # =========================================================================
-    n_states: int = 8         # Number of discrete load levels (Demand Grid)
-    soc_states: int = 21       # Grid resolution for SoC dimension (SoC Grid)
+
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
-    
-    # =========================================================================
-    # 5. CONTROL ACTION SPACE
-    # =========================================================================
-    n_vals: np.ndarray = field(
-        default_factory=lambda: np.arange(1, 5, dtype=np.int32)
-    )
+
+    N_Pd: int = 12         # Number of discrete load levels (Power demand Grid)
+    N_n: int = 4          # Number of fuel cell modules on board
+    N_soc: int = 61       # Grid resolution for SoC dimension (SoC Grid)
+    N_pb: int = 51        # Grid resolution for P_batt dimension (P_batt grid)
 
     # Derived fields (populated automatically in __post_init__)
     C_rep: float = field(init=False)
@@ -68,6 +65,22 @@ class SimConfig:
 
     def __post_init__(self):
         """Sanity check validations and derivation of mathematical constants."""
+        # --- DERIVED HYBRID CONSTANTS ---
+        # 1D discrete array for the module count dimension
+        object.__setattr__(self, 'n_vals', np.arange(1, self.N_n+1, dtype=np.int32))
+
+        # 1D discrete array for the State of Charge dimension
+        object.__setattr__(self, 'soc_vals', np.linspace(self.soc_min, self.soc_max, self.N_soc))
+
+        # 1D discrete array for the State of Charge dimension
+        object.__setattr__(self, 'pb_vals', np.linspace(self.pb_min, self.pb_max, self.N_pb))
+
+        # Total battery replacement cost [€]
+        object.__setattr__(self, 'C_rep', self.C_bat * self.c_bat_kwh)
+        
+        # Total lifetime energy throughput (Doubled for bidirectional wear calculation) [kWh]
+        object.__setattr__(self, 'E_life', 2.0 * self.n_cycles_rated * self.dod_rated * self.C_bat)
+
         if self.p_max <= 0 or self.p_nom <= 0:
             raise ValueError("Power limits p_max and p_nom must be strictly positive.")
             
@@ -83,15 +96,9 @@ class SimConfig:
         if not (0.0 <= self.soc_min < self.soc_max <= 1.0):
             raise ValueError("Invalid battery SoC boundary definitions.")
             
-        if self.p_batt_max <= 0 or self.p_batt_min >= 0:
+        if self.pb_max <= 0 or self.pb_min >= 0:
             raise ValueError("Battery discharge limit must be > 0, and charge limit must be < 0.")
+        
+        
 
-        # --- DERIVED HYBRID CONSTANTS ---
-        # Total battery replacement cost [€]
-        object.__setattr__(self, 'C_rep', self.C_bat * self.c_bat_kwh)
         
-        # Total lifetime energy throughput (Doubled for bidirectional wear calculation) [kWh]
-        object.__setattr__(self, 'E_life', 2.0 * self.n_cycles_rated * self.dod_rated * self.C_bat)
-        
-        # 1D discrete array for the State of Charge dimension
-        object.__setattr__(self, 'soc_vals', np.linspace(self.soc_min, self.soc_max, self.soc_states))

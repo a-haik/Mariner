@@ -32,7 +32,7 @@ class VoyageBenchmarker:
         
         # Train Macro DTMC using the corrected namespace 'alpha_mc'
         ds_train_macro = downsample_block_mean(t_concat, pd_concat, self.config.Ts, align='t0')
-        mc_macro = fit_dtmc(ds_train_macro['Pd'], self.config.n_states, self.config.alpha_mc)
+        mc_macro = fit_dtmc(ds_train_macro['Pd'], self.config.N_Pd, self.config.alpha_mc)
         
         # Prepare Test Data
         test_data = self.fleet_cache[test_day]
