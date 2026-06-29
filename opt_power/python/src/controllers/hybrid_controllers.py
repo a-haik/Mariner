@@ -6,10 +6,7 @@ from src.core import State, Action
 from src.config import SimConfig
 from src.utils.math_utils import nearest_index_1d, bilinear_interp, linear_interp_1d
 
-# =============================================================================
-# APPROACH 3: THE ENGINEERING REALITY (Discrete Tracking)
-# =============================================================================
-class DiscreteTrackingControl(ControlLaw):
+class HybridFCLockedControl(ControlLaw):
     """
     Simulates real-world hardware limits (PLCs). Snaps continuous reality to 
     the discrete SDP grid, extracting a rigid fuel cell setpoint. The battery 
@@ -44,10 +41,7 @@ class DiscreteTrackingControl(ControlLaw):
         self.current_step += 1
         return Action(n_modules=n_opt, p_batt=p_batt_disc, p_fc=p_fc_locked)
 
-# =============================================================================
-# APPROACH 2: THE DIRECT APPROXIMATION (Interpolated Policy)
-# =============================================================================
-class InterpolatedControl(ControlLaw):
+class HybridPolicyControl(ControlLaw):
     """
     Attempts to smooth out the discrete policy matrices via 2D Bilinear Interpolation.
     Highlights the dangers of interpolating 'bang-bang' optimal edges.
@@ -82,9 +76,6 @@ class InterpolatedControl(ControlLaw):
         self.current_step += 1
         return Action(n_modules=n_opt, p_batt=p_batt_opt, p_fc=p_fc_locked)
 
-# =============================================================================
-# APPROACH 1: THE THEORETICAL OPTIMUM (1-Step Lookahead)
-# =============================================================================
 @njit(cache=True)
 def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: float, 
                           p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
@@ -149,7 +140,7 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
 
     return best_n, best_pbatt
 
-class LookaheadControl(ControlLaw):
+class HybridValueControl(ControlLaw):
     """
     Bypasses the Policy Matrix entirely. Solves the Bellman equation online for the 
     exact continuous state (P_d, SoC), using the Value Matrix only for future expectations.
@@ -191,36 +182,3 @@ class LookaheadControl(ControlLaw):
         
         self.current_step += 1
         return Action(n_modules=int(best_n), p_batt=best_pbatt, p_fc=p_fc_locked)
-
-class NaiveHybridControl(ControlLaw):
-    """
-    Uses the legacy FC-only policy matrix. Acts as if the battery does not exist 
-    for planning purposes, forcing the Fuel Cell to target the full macro demand.
-    The battery simply absorbs high-frequency 1Hz noise passively at the plant level.
-    """
-    def __init__(self, p_grid: np.ndarray, n_vals: np.ndarray, policy_matrix: np.ndarray):
-        self.p_grid = p_grid
-        self.n_vals = n_vals
-        self.policy = policy_matrix
-        self.current_step = 0
-
-    def get_action(self, state: State) -> Action:
-        t_idx = min(self.current_step, len(self.policy) - 1)
-        
-        # 1. Snap macro demand and previous modules to grid
-        idx_p = nearest_index_1d(self.p_grid, state.P_d)
-        idx_n = nearest_index_1d(self.n_vals, float(state.n_prev))
-        
-        # 2. Extract legacy module intent (Assuming no battery)
-        best_n_idx = self.policy[t_idx, idx_p, idx_n]
-        n_opt = int(self.n_vals[best_n_idx])
-        
-        # 3. Legacy logic: FC tries to handle the entire macro-step demand
-        # We use the discrete grid demand just like the original solver saw it
-        discrete_p_d = self.p_grid[idx_p]
-        p_fc_locked = discrete_p_d
-        
-        self.current_step += 1
-        
-        # Battery intent is 0.0, but the Plant will dynamically use it as a 1Hz buffer
-        return Action(n_modules=n_opt, p_batt=0.0, p_fc=p_fc_locked)

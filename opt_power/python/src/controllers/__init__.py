@@ -1,12 +1,25 @@
 # python/src/controllers/__init__.py
-from src.controllers.base import ControlLaw
-from src.controllers.constant import ConstantControl
-from src.controllers.threshold import ThresholdControl
-from src.controllers.stochastic import StochasticControl
+from src.controllers.base import ControlLaw, build_approach
+
+from src.controllers.baseline_controllers import (
+    BaselineConstantControl,
+    BaselineThresholdControl,
+    BaselineSDPControl
+)
+
+from src.controllers.hybrid_controllers import (
+    HybridFCLockedControl,
+    HybridPolicyControl,
+    HybridValueControl
+)
 
 __all__ = [
+    "build_approach",
     "ControlLaw", 
-    "ConstantControl", 
-    "ThresholdControl", 
-    "StochasticControl"
+    "BaselineConstantControl",
+    "BaselineThresholdControl",
+    "BaselineSDPControl",
+    "HybridFCLockedControl",
+    "HybridPolicyControl",
+    "HybridValueControl",
 ]
