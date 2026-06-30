@@ -267,6 +267,10 @@ def plot_simulation_dashboard(df: pd.DataFrame, title: str = "Simulation Dashboa
         
         # Left Axis: Battery Power Area Plot
         ax4.plot(t_hours, df['p_batt_actual'], color='gray', linewidth=0.5, alpha=0.5) # Faint outline
+
+        p_max = df['p_batt_actual'].abs().max()
+        limit_p = p_max * 1.1 
+        ax4.set_ylim([-limit_p, limit_p])
         
         # Fill positive (Discharging) with Red
         ax4.fill_between(t_hours, 0, df['p_batt_actual'], 
