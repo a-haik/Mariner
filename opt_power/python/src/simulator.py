@@ -39,8 +39,8 @@ class Simulator:
             if time_sec % self.config.Ts == 0:
                 current_action = controller.get_action(current_state)
                 
-                if t == 0:
-                    current_state.n_prev = current_action.n_modules
+                # if t == 0:
+                #     current_state.n_prev = current_action.n_modules
 
             # STEP THE PLANT
             current_state, telemetry = self.plant.step(
