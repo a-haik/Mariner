@@ -36,15 +36,15 @@ class SimConfig:
     # =========================================================================
     # 3. BATTERY PHYSICAL PARAMETERS (Hybrid Additions)
     # =========================================================================
-    C_bat: float = 1000.0        # Nominal capacity of the battery pack [kWh]
-    c_bat_kwh: float = 125.0   # Replacement cost per kWh [€/kWh]
+    C_bat: float = 2000.0        # Nominal capacity of the battery pack [kWh]
+    c_bat_kwh: float = 250.0   # Replacement cost per kWh [€/kWh]
     soc_min: float = 0.2       # Minimum safe State of Charge (20%)
     soc_max: float = 0.8       # Maximum safe State of Charge (80%)
     soc_initial: float = 0.5   # Starting State of Charge (70%)
     
-    pb_max: float = 500.0   # Maximum discharge limit [kW] (Assumed 2C rate)
-    pb_min: float = -500.0  # Maximum charge limit [kW]
-    n_cycles_rated: float = 3000.0 # Manufacturer rated cycle life
+    pb_max: float = 6000.0   # Maximum discharge limit [kW] (Assumed 2C rate)
+    pb_min: float = -6000.0  # Maximum charge limit [kW]
+    n_cycles_rated: float = 12000.0 # Manufacturer rated cycle life
     dod_rated: float = 0.8     # Depth of discharge for rated cycles
     
     # =========================================================================
