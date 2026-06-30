@@ -94,8 +94,15 @@ class VoyageBenchmarker:
         # 4. Execute the factory (This runs the heavy SDP math if applicable)
         controller, plant, is_macro_returned = approach_factory(self.config, mc_model, horizon_length)
         
-        test_pd = test_pd_macro if is_macro_returned else test_pd_micro
-        dt_override = float(self.config.Ts) if is_macro_returned else None
+        if is_macro_returned:
+            # Snap the macro data strictly to the Markov grid
+            levels = mc_model['levels']
+            from src.utils.math_utils import nearest_index_1d
+            test_pd = np.array([levels[nearest_index_1d(levels, val)] for val in test_pd_macro])
+            dt_override = float(self.config.Ts)
+        else:
+            test_pd = test_pd_micro
+            dt_override = None
             
         sim = Simulator(self.config, test_pd, plant, dt_override=dt_override)
         sim.run(controller)

@@ -264,32 +264,34 @@ def plot_simulation_dashboard(df: pd.DataFrame, title: str = "Simulation Dashboa
     # --- PANE 4: Battery Health & Power (Hybrid Only) ---
     if has_battery:
         current_fig, ax4 = get_ax()
+
+        # Left Axis: State of Charge (SoC)
+        ax4.plot(t_hours, df['soc'] * 100, label='State of Charge', color='black', linewidth=2)
+        ax4.set_ylabel("SoC [%]")
+        ax4.set_ylim([0, 100])
+        ax4.axhline(50, color='black', linewidth=1, linestyle='--') # Clear Zero Line
+        ax4.axhline(80, color='black', linewidth=1, linestyle='--') 
+        ax4.axhline(20, color='black', linewidth=1, linestyle='--') 
         
-        # Left Axis: Battery Power Area Plot
-        ax4.plot(t_hours, df['p_batt_actual'], color='gray', linewidth=0.5, alpha=0.5) # Faint outline
+        # Right Axis: Battery Power Area Plot
+        ax4_twin = ax4.twinx()
+        ax4_twin.plot(t_hours, df['p_batt_actual'], color='gray', linewidth=0.5, alpha=0.5) # Faint outline
 
         p_max = df['p_batt_actual'].abs().max()
         limit_p = p_max * 1.1 
-        ax4.set_ylim([-limit_p, limit_p])
+        ax4_twin.set_ylim([-limit_p, limit_p])
         
         # Fill positive (Discharging) with Red
-        ax4.fill_between(t_hours, 0, df['p_batt_actual'], 
+        ax4_twin.fill_between(t_hours, 0, df['p_batt_actual'], 
                          where=(df['p_batt_actual'] > 0), 
                          color='red', alpha=0.2, label='Discharging', interpolate=True)
                          
         # Fill negative (Charging) with Green
-        ax4.fill_between(t_hours, 0, df['p_batt_actual'], 
+        ax4_twin.fill_between(t_hours, 0, df['p_batt_actual'], 
                          where=(df['p_batt_actual'] < 0), 
                          color='green', alpha=0.2, label='Charging', interpolate=True)
         
-        ax4.set_ylabel("Battery Power [kW]")
-        ax4.axhline(0, color='black', linewidth=1, linestyle='--') # Clear Zero Line
-        
-        # Right Axis: State of Charge (SoC)
-        ax4_twin = ax4.twinx()
-        ax4_twin.plot(t_hours, df['soc'] * 100, label='State of Charge', color='black', linewidth=2)
-        ax4_twin.set_ylabel("SoC [%]")
-        ax4_twin.set_ylim([0, 100])
+        ax4_twin.set_ylabel("Battery Power [kW]")
         
         if indiv:
             ax4.set_title(f"{title} - Battery State")

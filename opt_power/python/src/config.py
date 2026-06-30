@@ -19,7 +19,7 @@ class SimConfig:
     # =========================================================================
     p_max: float = 500.0       # Absolute ceiling power per PEMFC module [kW]
     p_nom: float = 200.0       # Nominal optimal load per PEMFC module [kW]
-    n0: int = 1                # Initial number of active fuel cell modules
+    n0: int = 0                # Initial number of active fuel cell modules
     
     # Degradation & Cost Coefficients
     tau_fc: float = 50000.0    # Expected service life at steady nominal operation [Hours]
@@ -84,8 +84,8 @@ class SimConfig:
         if self.p_max <= 0 or self.p_nom <= 0:
             raise ValueError("Power limits p_max and p_nom must be strictly positive.")
             
-        if self.n0 not in self.n_vals:
-            raise ValueError(f"Initial module state n0={self.n0} must fall within action space n_vals.")
+        if self.n0 not in self.n_vals and self.n0 != 0:
+            raise ValueError(f"Initial module state n0={self.n0} must fall within action space n_vals or be 0.")
             
         if self.alpha_mc < 0:
             raise ValueError("Dirichlet smoothing coefficient alpha_mc cannot be negative.")

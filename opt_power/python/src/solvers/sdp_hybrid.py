@@ -79,6 +79,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                     penalty = 0.0
 
                 V[T - 1, i, j, k] = C_o + penalty
+                policy_n[T - 1, i, j, k] = j
 
     # Pre-allocated cache for the stochastic expected future costs over Demand
     exp_future_cache = np.zeros((p_size, n_size, soc_size), dtype=np.float64)
@@ -153,7 +154,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                                 best_cost = total_cost
                                 best_n_idx = a_idx
                                 best_pbatt = pbatt
-                                
+
                     V[t, i, j, k] = best_cost
                     policy_n[t, i, j, k] = best_n_idx
                     policy_pbatt[t, i, j, k] = best_pbatt

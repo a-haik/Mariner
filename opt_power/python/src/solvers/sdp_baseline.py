@@ -39,6 +39,7 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                 d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
                 c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
                 V[T - 1, i, j] = n_val * c_o_rate * Ts
+                policy[T - 1, i, j] = j
 
     # 2. Backward Iteration (T-2 down to 0)
     for t in range(T - 2, -1, -1):
