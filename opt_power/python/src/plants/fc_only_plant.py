@@ -6,7 +6,7 @@ from src.plants.base import BasePlant
 
 class FuelCellOnlyPlant(BasePlant):
     """
-    Physical baseline (No Battery). 
+    Physical baseline (No Battery).
     Cleaned of continuous-time blackout penalties.
     """
     def __init__(self, config: SimConfig):
@@ -14,13 +14,13 @@ class FuelCellOnlyPlant(BasePlant):
 
     def step(self, state: State, action: Action, dt: float) -> Tuple[State, Dict[str, float]]:
         n_active = action.n_modules
-        p_fc_total = state.P_d 
+        p_fc_actual = state.P_d  # <-- UNIFIED NOMENCLATURE
         
         if n_active <= 0:
-            c_o = float('inf') if p_fc_total > 0 else 0.0
+            c_o = float('inf') if p_fc_actual > 0 else 0.0
             p_module = 0.0
         else:
-            p_module = p_fc_total / n_active
+            p_module = p_fc_actual / n_active
             
             # Exact Continuous Electrochemical Costs
             m_dot_h2 = (self.config.a0 + self.config.a1 * p_module + self.config.a2 * (p_module ** 2))
@@ -37,7 +37,7 @@ class FuelCellOnlyPlant(BasePlant):
         next_state = State(P_d=0.0, n_prev=n_active, soc=state.soc)
         
         telemetry = {
-            'p_fc_total': p_fc_total,
+            'p_fc_actual': p_fc_actual,
             'n_active': n_active,
             'cost_o': c_o,
             'cost_s': c_s,

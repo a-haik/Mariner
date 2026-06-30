@@ -19,7 +19,7 @@ class SimConfig:
     # =========================================================================
     p_max: float = 500.0       # Absolute ceiling power per PEMFC module [kW]
     p_nom: float = 200.0       # Nominal optimal load per PEMFC module [kW]
-    n0: int = 2                # Initial number of active fuel cell modules
+    n0: int = 1                # Initial number of active fuel cell modules
     
     # Degradation & Cost Coefficients
     tau_fc: float = 50000.0    # Expected service life at steady nominal operation [Hours]

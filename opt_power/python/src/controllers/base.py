@@ -87,4 +87,8 @@ def build_approach(controller_cls, plant_cls=HybridPlant, solver_cls=None, is_ma
         
         return ctrl, plant, is_macro
 
+    factory.controller_name = controller_cls.__name__
+    factory.plant_name = plant_cls.__name__
+    factory.is_macro = is_macro
+    
     return factory
