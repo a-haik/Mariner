@@ -1,6 +1,7 @@
 # python/src/config.py
 from dataclasses import dataclass, field
 import numpy as np
+import os
 
 @dataclass(frozen=True)
 class SimConfig:
@@ -17,8 +18,8 @@ class SimConfig:
     # =========================================================================
     # 2. FUEL CELL PHYSICAL PARAMETERS
     # =========================================================================
-    p_max: float = 500.0       # Absolute ceiling power per PEMFC module [kW]
-    p_nom: float = 200.0       # Nominal optimal load per PEMFC module [kW]
+    p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
+    p_nom: float = 80.0       # Nominal optimal load per PEMFC module [kW]
     n0: int = 0                # Initial number of active fuel cell modules
     
     # Degradation & Cost Coefficients
@@ -40,7 +41,7 @@ class SimConfig:
     c_bat_kwh: float = 250.0   # Replacement cost per kWh [€/kWh]
     soc_min: float = 0.2       # Minimum safe State of Charge (20%)
     soc_max: float = 0.8       # Maximum safe State of Charge (80%)
-    soc_initial: float = 0.5   # Starting State of Charge (70%)
+    soc_initial: float = 0.5   # Starting State of Charge (50%)
     
     pb_max: float = 6000.0   # Maximum discharge limit [kW] (Assumed 2C rate)
     pb_min: float = -6000.0  # Maximum charge limit [kW]
@@ -53,10 +54,16 @@ class SimConfig:
 
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
 
-    N_Pd: int = 12         # Number of discrete load levels (Power demand Grid)
-    N_n: int = 4          # Number of fuel cell modules on board
+    N_Pd: int = 16         # Number of discrete load levels (Power demand Grid)
+    N_n: int = 16          # Number of fuel cell modules on board
     N_soc: int = 61       # Grid resolution for SoC dimension (SoC Grid)
     N_pb: int = 51        # Grid resolution for P_batt dimension (P_batt grid)
+
+    # =========================================================================
+    # 5. DIRECTORY & PATH MANAGEMENT
+    # =========================================================================
+    data_dir: str = "../data/"
+    vault_dir: str = "../data/vault/"
 
     # Derived fields (populated automatically in __post_init__)
     C_rep: float = field(init=False)
@@ -65,6 +72,20 @@ class SimConfig:
 
     def __post_init__(self):
         """Sanity check validations and derivation of mathematical constants."""
+        # --- PATH RESOLUTION ---
+        # Anchor the base directory to the 'python/' folder (one level up from src/)
+        python_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        abs_data_dir = os.path.abspath(os.path.join(python_dir, self.data_dir))
+        abs_vault_dir = os.path.abspath(os.path.join(python_dir, self.vault_dir))
+        
+        # Override the strings with absolute paths
+        object.__setattr__(self, 'data_dir', abs_data_dir)
+        object.__setattr__(self, 'vault_dir', abs_vault_dir)
+        
+        # Ensure the vault directory actually exists before anything tries to write to it
+        os.makedirs(abs_vault_dir, exist_ok=True)
+
         # --- DERIVED HYBRID CONSTANTS ---
         # 1D discrete array for the module count dimension
         object.__setattr__(self, 'n_vals', np.arange(1, self.N_n+1, dtype=np.int32))

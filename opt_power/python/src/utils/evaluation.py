@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from src.utils.data_processing import downsample_block_mean, fit_dtmc
 from src.simulator import Simulator
-from src.utils.vault import RunVault
+from src.utils.vault import ModelVault
 
 def print_markdown_table(df: pd.DataFrame):
     """Custom Markdown table generator for clean copy-pasting."""
@@ -28,74 +28,77 @@ def print_markdown_table(df: pd.DataFrame):
         print(format_row(vals))
 
 class BenchmarkReport:
-    """Lazy-evaluation interface to prevent RAM bloat during Cross-Validation."""
-    def __init__(self, summary_df: pd.DataFrame, run_hashes: dict, vault: RunVault):
+    """In-memory evaluation interface. Telemetry is no longer written to disk."""
+    def __init__(self, summary_df: pd.DataFrame, telemetry_dict: dict):
         self.summary = summary_df
-        self.run_hashes = run_hashes
-        self.vault = vault
+        self.telemetry = telemetry_dict
 
     def get_telemetry(self, run_identifier: str) -> pd.DataFrame:
-        """Loads the heavy time-series data from Parquet on demand."""
-        if run_identifier not in self.run_hashes:
-            raise KeyError(f"Run '{run_identifier}' not found. Available runs: {list(self.run_hashes.keys())}")
-        return self.vault.load_telemetry(self.run_hashes[run_identifier])
+        """Instantly returns the DataFrame from RAM."""
+        if run_identifier not in self.telemetry:
+            raise KeyError(f"Run '{run_identifier}' not found.")
+        return self.telemetry[run_identifier]
 
 class VoyageBenchmarker:
     """
-    Automated evaluation engine for Cross-Validation and Benchmarking.
-    Handles data isolation, model training, and metric extraction.
+    Automated evaluation engine.
+    Now separated into Phase 1 (Model Training/Fetching) and Phase 2 (Fast Simulation).
     """
     def __init__(self, fleet_cache: dict, config, exclude_days: list = None):
         self.fleet_cache = fleet_cache
         self.config = config
         self.exclude_days = exclude_days or []
         self.valid_days = sorted([d for d in fleet_cache.keys() if d not in self.exclude_days])
-        self.vault = RunVault()
         
-    def _prepare_data(self, train_days: list, test_day: int):
-        train_t, train_pd = [], []
-        for d in train_days:
-            data = self.fleet_cache[d]
-            t_off = train_t[-1][-1] if train_t else 0.0
-            train_t.append(data['t'] + t_off)
-            train_pd.append(data['Pd'])
+        # Initialize the new ModelVault pointing to the path in SimConfig
+        self.vault = ModelVault(self.config.vault_dir)
+
+    def _get_or_compute_models(self, train_days: list, solver_cls, horizon_length: int):
+        # --- 1. MARKOV MODEL ---
+        markov_hash = self.vault.generate_markov_hash(train_days, self.config)
+        mc_model = self.vault.load_markov_model(markov_hash)
+        
+        if mc_model is None:
+            print(f" [Vault] Cache MISS: Training Markov Chain for days {train_days}...")
+            train_t, train_pd = [], []
+            for d in train_days:
+                data = self.fleet_cache[d]
+                # CRITICAL FIX: Offset the time so days are sequential, not stacked!
+                t_off = train_t[-1][-1] if train_t else 0.0
+                train_t.append(data['t'] + t_off)
+                train_pd.append(data['Pd'])
+                
+            t_concat = np.concatenate(train_t)
+            pd_concat = np.concatenate(train_pd)
             
-        t_concat = np.concatenate(train_t)
-        pd_concat = np.concatenate(train_pd)
+            ds_train = downsample_block_mean(t_concat, pd_concat, self.config.Ts, align='t0')
+            mc_model = fit_dtmc(ds_train['Pd'], self.config.N_Pd, self.config.alpha_mc)
+            mc_model['Delta'] = self.config.Ts  
+            
+            self.vault.save_markov_model(markov_hash, mc_model, train_days)
         
-        ds_train_macro = downsample_block_mean(t_concat, pd_concat, self.config.Ts, align='t0')
-        mc_macro = fit_dtmc(ds_train_macro['Pd'], self.config.N_Pd, self.config.alpha_mc)
+        # --- 2. SDP BELLMAN MATRICES ---
+        raw_solution = None
+        if solver_cls is not None:
+            sdp_hash = self.vault.generate_sdp_hash(markov_hash, solver_cls.__name__, horizon_length, self.config)
+            raw_solution = self.vault.load_sdp_model(sdp_hash)
+            
+            if raw_solution is None:
+                print(f" [Vault] Cache MISS: Solving SDP Bellman matrices ({solver_cls.__name__})...")
+                solver = solver_cls(self.config, mc_model)
+                raw_solution = solver.compute_solution(horizon_length)
+                self.vault.save_sdp_model(sdp_hash, markov_hash, solver_cls.__name__, raw_solution)
+                
+        return mc_model, raw_solution
+
+    def _run_simulation(self, approach_factory, mc_model, raw_solution, test_pd_micro, test_pd_macro, horizon_length):
+        """Phase 2: Bypasses training entirely and just executes the continuous environment."""
+        is_macro_returned = approach_factory.is_macro
         
-        test_data = self.fleet_cache[test_day]
-        ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Ts, align='t0')
-        horizon_length = len(ds_test['Pd'])
-        
-        # RETURN BOTH 1Hz AND 300s TEST ARRAYS
-        return mc_macro, test_data['Pd'], ds_test['Pd'], horizon_length
-
-    def _evaluate_single_run(self, approach_factory, mc_model, test_pd_micro, test_pd_macro, horizon_length, train_days, test_day):
-        # 1. Safely extract physics identity without triggering the factory
-        ctrl_name = getattr(approach_factory, 'controller_name', 'UnknownController')
-        plant_name = getattr(approach_factory, 'plant_name', 'UnknownPlant')
-        is_macro = getattr(approach_factory, 'is_macro', False)
-
-        # 2. Generate Deterministic Hash
-        hash_id = self.vault.generate_hash(ctrl_name, plant_name, train_days, test_day, is_macro, self.config)
-
-        # 3. Cache Check
-        cached_metrics = self.vault.get_metrics(hash_id)
-        if cached_metrics is not None:
-            print(f" [Vault] Cache HIT: {ctrl_name} (Day {test_day}). Skipping simulation.")
-            return cached_metrics, hash_id
-
-        print(f" [Vault] Cache MISS: Executing {ctrl_name} (Day {test_day})...")
-        start_time = time.perf_counter()
-        
-        # 4. Execute the factory (This runs the heavy SDP math if applicable)
-        controller, plant, is_macro_returned = approach_factory(self.config, mc_model, horizon_length)
+        # Pass the pre-computed math into the factory
+        controller, plant, _ = approach_factory(self.config, mc_model, horizon_length, raw_solution=raw_solution)
         
         if is_macro_returned:
-            # Snap the macro data strictly to the Markov grid
             levels = mc_model['levels']
             from src.utils.math_utils import nearest_index_1d
             test_pd = np.array([levels[nearest_index_1d(levels, val)] for val in test_pd_macro])
@@ -105,61 +108,91 @@ class VoyageBenchmarker:
             dt_override = None
             
         sim = Simulator(self.config, test_pd, plant, dt_override=dt_override)
+        start_time = time.perf_counter()
         sim.run(controller)
-        
         calc_time = time.perf_counter() - start_time
         
         metrics = {
             'Total Cost [€]': sum(sim.history.get('cost_total', [0.0])),
             'Operating Cost [€]': sum(sim.history.get('cost_o', [0.0])),
             'Switching Cost [€]': sum(sim.history.get('cost_s', [0.0])),
-            'Transient Cost [€]': sum(sim.history.get('cost_trans', [0.0])),
             'Battery Cost [€]': sum(sim.history.get('cost_bat', [0.0])),
             'Computation Time [s]': calc_time
         }
-
-        # 5. Save to Disk
-        telemetry_df = pd.DataFrame(sim.history)
-        self.vault.save_run(hash_id, ctrl_name, plant_name, train_days, test_day, is_macro_returned, metrics, telemetry_df)
         
-        return metrics, hash_id
+        telemetry_df = pd.DataFrame(sim.history)
+        return metrics, telemetry_df
 
     def compare_approaches(self, approaches: dict, train_days: list, test_day: int) -> BenchmarkReport:
-        mc_model, test_pd_micro, test_pd_macro, horizon = self._prepare_data(train_days, test_day)
-        results, run_hashes = {}, {}
+        test_data = self.fleet_cache[test_day]
+        ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Ts, align='t0')
+        horizon = len(ds_test['Pd'])
+        
+        results, telemetry_dict = {}, {}
+        
         for name, factory in approaches.items():
-            metrics, hash_id = self._evaluate_single_run(factory, mc_model, test_pd_micro, test_pd_macro, horizon, train_days, test_day)
+            solver_cls = getattr(factory, 'solver_cls', None)
+            mc_model, raw_solution = self._get_or_compute_models(train_days, solver_cls, horizon)
+            
+            metrics, df = self._run_simulation(
+                factory, mc_model, raw_solution, 
+                test_data['Pd'], ds_test['Pd'], horizon
+            )
+            
             results[name] = metrics
-            run_hashes[name] = hash_id
-        return BenchmarkReport(pd.DataFrame(results).T, run_hashes, self.vault)
+            telemetry_dict[name] = df
+            
+        return BenchmarkReport(pd.DataFrame(results).T, telemetry_dict)
 
     def run_leave_one_out(self, approach_factory) -> BenchmarkReport:
-        results, run_hashes = {}, {}
+        results, telemetry_dict = {}, {}
+        solver_cls = getattr(approach_factory, 'solver_cls', None)
+        
         for test_day in self.valid_days:
             train_days = [d for d in self.valid_days if d != test_day]
-            mc_model, test_pd_micro, test_pd_macro, horizon = self._prepare_data(train_days, test_day)
+            
+            test_data = self.fleet_cache[test_day]
+            ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Ts, align='t0')
+            horizon = len(ds_test['Pd'])
             
             run_id = f"Day {test_day}"
-            metrics, hash_id = self._evaluate_single_run(approach_factory, mc_model, test_pd_micro, test_pd_macro, horizon, train_days, test_day)
-            results[run_id] = metrics
-            run_hashes[run_id] = hash_id
             
-        df = pd.DataFrame(results).T
-        df.loc['Average'] = df.mean()
-        return BenchmarkReport(df, run_hashes, self.vault)
+            mc_model, raw_solution = self._get_or_compute_models(train_days, solver_cls, horizon)
+            metrics, df = self._run_simulation(
+                approach_factory, mc_model, raw_solution, 
+                test_data['Pd'], ds_test['Pd'], horizon
+            )
+            
+            results[run_id] = metrics
+            telemetry_dict[run_id] = df
+            
+        df_results = pd.DataFrame(results).T
+        df_results.loc['Average'] = df_results.mean()
+        return BenchmarkReport(df_results, telemetry_dict)
 
     def run_forward_chaining(self, approach_factory, min_train_days: int = 1) -> BenchmarkReport:
-        results, run_hashes = {}, {}
+        results, telemetry_dict = {}, {}
+        solver_cls = getattr(approach_factory, 'solver_cls', None)
+        
         for i in range(min_train_days, len(self.valid_days)):
             train_days = self.valid_days[:i]
             test_day = self.valid_days[i]
-            mc_model, test_pd_micro, test_pd_macro, horizon = self._prepare_data(train_days, test_day)
             
-            run_id = f"Train 1-{train_days[-1]} -> Test {test_day}"
-            metrics, hash_id = self._evaluate_single_run(approach_factory, mc_model, test_pd_micro, test_pd_macro, horizon, train_days, test_day)
+            test_data = self.fleet_cache[test_day]
+            ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Ts, align='t0')
+            horizon = len(ds_test['Pd'])
+            
+            run_id = f"Train {train_days[-1]} -> Test {test_day}"
+            
+            mc_model, raw_solution = self._get_or_compute_models(train_days, solver_cls, horizon)
+            metrics, df = self._run_simulation(
+                approach_factory, mc_model, raw_solution, 
+                test_data['Pd'], ds_test['Pd'], horizon
+            )
+            
             results[run_id] = metrics
-            run_hashes[run_id] = hash_id
+            telemetry_dict[run_id] = df
             
-        df = pd.DataFrame(results).T
-        df.loc['Average'] = df.mean()
-        return BenchmarkReport(df, run_hashes, self.vault)
+        df_results = pd.DataFrame(results).T
+        df_results.loc['Average'] = df_results.mean()
+        return BenchmarkReport(df_results, telemetry_dict)
