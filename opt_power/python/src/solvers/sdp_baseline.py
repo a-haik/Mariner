@@ -9,40 +9,34 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                              transition_matrix: np.ndarray, Ts: float, 
                              p_max: float, p_nom: float, k_fc: float, k_h2: float, 
                              S_max: float, tau_fc: float, alpha_fc: float,
-                             a0: float, a1: float, a2: float):
+                             a0: float, a1: float, a2: float,
+                             nT: int, apply_terminal_n_cost: bool):
     """
     JIT-compiled backward induction routine solving the discrete Bellman recursion.
-    Updated with continuous time integration, true electrochemical formulas, 
-    and highly optimized expectation caching.
+    Updated with true T+1 terminal boundary conditions.
     """
     p_size = len(p_vals)
     n_size = len(n_vals)
     
-    V = np.full((T, p_size, n_size), np.inf, dtype=np.float64)
+    # EXPAND V matrix to size T+1. Policy stays T.
+    V = np.full((T + 1, p_size, n_size), np.inf, dtype=np.float64)
     policy = np.zeros((T, p_size, n_size), dtype=np.int32)
     k_s = k_fc / S_max
 
     # Cache for the Expected Future Cost optimization
     exp_future_cache = np.empty(n_size, dtype=np.float64)
     
-    # 1. Terminal Condition (t = T-1)
+    # 1. NEW Terminal Boundary Condition (t = T)
     for i in range(p_size):
-        p_val = p_vals[i]
         for j in range(n_size):
             n_val = n_vals[j]
-            if n_val <= 0:
-                continue
-            
-            p_module = p_val / n_val
-            if p_module <= p_max:
-                m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
-                d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
-                c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
-                V[T - 1, i, j] = n_val * c_o_rate * Ts
-                policy[T - 1, i, j] = j
+            if apply_terminal_n_cost:
+                V[T, i, j] = k_s * abs(n_val - nT)
+            else:
+                V[T, i, j] = 0.0
 
-    # 2. Backward Iteration (T-2 down to 0)
-    for t in range(T - 2, -1, -1):
+    # 2. Unified Backward Iteration (T-1 down to 0)
+    for t in range(T - 1, -1, -1):
         for i in range(p_size):
             p_val = p_vals[i]
 
@@ -122,5 +116,7 @@ class BaselineSDPSolver:
             alpha_fc=float(self.config.alpha_fc),
             a0=float(self.config.a0),
             a1=float(self.config.a1),
-            a2=float(self.config.a2)
+            a2=float(self.config.a2),
+            nT=int(self.config.nT),                              
+            apply_terminal_n_cost=bool(self.config.apply_terminal_n_cost)
         )

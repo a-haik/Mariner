@@ -19,8 +19,9 @@ class SimConfig:
     # 2. FUEL CELL PHYSICAL PARAMETERS
     # =========================================================================
     p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
-    p_nom: float = 80.0       # Nominal optimal load per PEMFC module [kW]
+    p_nom: float = 80.0        # Nominal optimal load per PEMFC module [kW]
     n0: int = 0                # Initial number of active fuel cell modules
+    nT: int = 0               # Target number of active modules at the end of the voyage
     
     # Degradation & Cost Coefficients
     tau_fc: float = 50000.0    # Expected service life at steady nominal operation [Hours]
@@ -42,14 +43,21 @@ class SimConfig:
     soc_min: float = 0.2       # Minimum safe State of Charge (20%)
     soc_max: float = 0.8       # Maximum safe State of Charge (80%)
     soc_initial: float = 0.5   # Starting State of Charge (50%)
+    soc_target: float = 0.5    # Target terminal State of Charge
     
     pb_max: float = 6000.0   # Maximum discharge limit [kW] (Assumed 2C rate)
     pb_min: float = -6000.0  # Maximum charge limit [kW]
     n_cycles_rated: float = 12000.0 # Manufacturer rated cycle life
     dod_rated: float = 0.8     # Depth of discharge for rated cycles
+
+    # =========================================================================
+    # 4. SIMULATION BOUNDARY CONDITIONS (Terminal Penalties)
+    # =========================================================================
+    apply_terminal_n_cost: bool = True   # Force FCs to shut down at time T (incurs final switching cost)
+    apply_terminal_soc_cost: bool = True  # Apply symmetrical penalty/reward for final SoC deviation from soc_initial
     
     # =========================================================================
-    # 4. MARKOV CHAIN & GRID CALIBRATION
+    # 5. MARKOV CHAIN & GRID CALIBRATION
     # =========================================================================
 
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
@@ -60,7 +68,7 @@ class SimConfig:
     N_pb: int = 51        # Grid resolution for P_batt dimension (P_batt grid)
 
     # =========================================================================
-    # 5. DIRECTORY & PATH MANAGEMENT
+    # 6. DIRECTORY & PATH MANAGEMENT
     # =========================================================================
     data_dir: str = "../data/"
     vault_dir: str = "../data/vault/"
@@ -107,6 +115,10 @@ class SimConfig:
             
         if self.n0 not in self.n_vals and self.n0 != 0:
             raise ValueError(f"Initial module state n0={self.n0} must fall within action space n_vals or be 0.")
+        
+        if self.nT not in self.n_vals and self.nT != 0:
+            raise ValueError(f"Terminal module state nT={self.nT} must fall within action space n_vals or be 0.")
+
             
         if self.alpha_mc < 0:
             raise ValueError("Dirichlet smoothing coefficient alpha_mc cannot be negative.")
@@ -116,6 +128,9 @@ class SimConfig:
             
         if not (0.0 <= self.soc_min < self.soc_max <= 1.0):
             raise ValueError("Invalid battery SoC boundary definitions.")
+              
+        if not (self.soc_min <= self.soc_target <= self.soc_max):
+            raise ValueError("Terminal soc_target must remain within the physical soc_min and soc_max boundaries.")
             
         if self.pb_max <= 0 or self.pb_min >= 0:
             raise ValueError("Battery discharge limit must be > 0, and charge limit must be < 0.")

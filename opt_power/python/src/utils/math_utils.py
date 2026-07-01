@@ -83,3 +83,24 @@ def bilinear_interp(x_grid: np.ndarray, y_grid: np.ndarray, values_2d: np.ndarra
 
     # Interpolate the resulting points along the Y-axis
     return c0 + y_w * (c1 - c0)
+
+@njit(cache=True)
+def get_c_min_kwh(p_max: float, p_nom: float, tau_fc: float, alpha_fc: float, 
+                   k_fc: float, k_h2: float, a0: float, a1: float, a2: float) -> float:
+    """
+    Finds the absolute cheapest cost to produce 1 kWh of energy using the fuel cell.
+    Used for the terminal boundary penalty calculation.
+    """
+    min_cost_per_kwh = np.inf
+    # Discretize the power range to find the optimal specific consumption point
+    for p in np.linspace(1.0, p_max, 200):
+        m_dot = a0 + a1 * p + a2 * (p**2)
+        d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p - p_nom)**2) / (p_nom**2))
+        cost_rate_sec = (k_h2 * m_dot / 1000.0) + (k_fc * d_fc)
+        
+        # Convert €/s to €/kWh
+        cost_kwh = cost_rate_sec * 3600.0 / p
+        if cost_kwh < min_cost_per_kwh:
+            min_cost_per_kwh = cost_kwh
+            
+    return min_cost_per_kwh

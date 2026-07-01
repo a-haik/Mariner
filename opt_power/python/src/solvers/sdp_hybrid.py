@@ -3,28 +3,7 @@ import numpy as np
 from numba import njit
 from typing import Tuple
 from src.config import SimConfig
-from src.utils.math_utils import linear_interp_1d
-
-@njit(cache=True)
-def _get_c_min_kwh(p_max: float, p_nom: float, tau_fc: float, alpha_fc: float, 
-                   k_fc: float, k_h2: float, a0: float, a1: float, a2: float) -> float:
-    """
-    Finds the absolute cheapest cost to produce 1 kWh of energy using the fuel cell.
-    Used for the terminal boundary penalty calculation.
-    """
-    min_cost_per_kwh = np.inf
-    # Discretize the power range to find the optimal specific consumption point
-    for p in np.linspace(1.0, p_max, 200):
-        m_dot = a0 + a1 * p + a2 * (p**2)
-        d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p - p_nom)**2) / (p_nom**2))
-        cost_rate_sec = (k_h2 * m_dot / 1000.0) + (k_fc * d_fc)
-        
-        # Convert €/s to €/kWh
-        cost_kwh = cost_rate_sec * 3600.0 / p
-        if cost_kwh < min_cost_per_kwh:
-            min_cost_per_kwh = cost_kwh
-            
-    return min_cost_per_kwh
+from src.utils.math_utils import linear_interp_1d, get_c_min_kwh
 
 @njit(cache=True)
 def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
@@ -32,60 +11,53 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                           p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                           tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
                           C_bat: float, C_rep: float, E_life: float, 
-                          soc_min: float, soc_max: float, soc_initial: float):
+                          soc_min: float, soc_max: float, 
+                          nT: int, apply_terminal_n_cost: bool,
+                          soc_target: float, apply_terminal_soc_cost: bool):
     """
     JIT-compiled backward induction routine for the 4D Hybrid System.
+    Updated with true T+1 terminal boundary conditions.
     """
     p_size = len(p_vals)
     n_size = len(n_vals)
     soc_size = len(soc_vals)
     pbatt_size = len(pb_vals)
     
-    # 4D Value and Dual-Policy Matrices
-    V = np.full((T, p_size, n_size, soc_size), np.inf, dtype=np.float64)
+    # EXPAND V matrix to size T+1. Policies stay T.
+    V = np.full((T + 1, p_size, n_size, soc_size), np.inf, dtype=np.float64)
     policy_n = np.zeros((T, p_size, n_size, soc_size), dtype=np.int32)
     policy_pbatt = np.zeros((T, p_size, n_size, soc_size), dtype=np.float64)
     
     k_s = k_fc / S_max
     
     # 1. Precalculate optimal charging cost for the boundary condition
-    c_min_kwh = _get_c_min_kwh(p_max, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2)
+    c_min_kwh = get_c_min_kwh(p_max, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2)
 
-    # 2. Terminal Condition (t = T-1)
+    # 2. NEW Terminal Boundary Condition (t = T)
     for i in range(p_size):
-        p_val = p_vals[i]
         for j in range(n_size):
             n_val = n_vals[j]
-            if n_val <= 0:
-                continue
             
+            term_n_cost = 0.0
+            if apply_terminal_n_cost:
+                term_n_cost = k_s * abs(n_val - nT)
+                
             for k in range(soc_size):
                 soc_val = soc_vals[k]
                 
-                p_module = p_val / n_val
-                if p_module <= p_max:
-                    m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
-                    d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
-                    c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
-                    C_o = n_val * c_o_rate * Ts
-                else:
-                    C_o = np.inf
-
-                # Boundary condition logic (Stranded energy vs Deficit)
-                if soc_val < soc_initial:
-                    delta_e_kwh = (soc_initial - soc_val) * C_bat
-                    penalty = delta_e_kwh * c_min_kwh
-                else:
-                    penalty = 0.0
-
-                V[T - 1, i, j, k] = C_o + penalty
-                policy_n[T - 1, i, j, k] = j
+                term_soc_cost = 0.0
+                if apply_terminal_soc_cost:
+                    # Positive cost for deficit, Negative cost (reward) for surplus
+                    delta_e_kwh = (soc_target - soc_val) * C_bat
+                    term_soc_cost = delta_e_kwh * c_min_kwh
+                    
+                V[T, i, j, k] = term_n_cost + term_soc_cost
 
     # Pre-allocated cache for the stochastic expected future costs over Demand
     exp_future_cache = np.zeros((p_size, n_size, soc_size), dtype=np.float64)
 
-    # 3. Backward Iteration (T-2 down to 0)
-    for t in range(T - 2, -1, -1):
+    # 3. Unified Backward Iteration (T-1 down to 0)
+    for t in range(T - 1, -1, -1):
         
         # --- EXPECTATION TRANSPOSITION ---
         # Calculate Expected Value over the stochastic Demand dimension ONCE per timestep
@@ -197,5 +169,8 @@ class HybridSDPSolver:
             E_life=float(self.config.E_life),
             soc_min=float(self.config.soc_min),
             soc_max=float(self.config.soc_max),
-            soc_initial=float(self.config.soc_initial)
+            nT=int(self.config.nT),                                   
+            apply_terminal_n_cost=bool(self.config.apply_terminal_n_cost),
+            soc_target=float(self.config.soc_target),
+            apply_terminal_soc_cost=bool(self.config.apply_terminal_soc_cost)
         )
