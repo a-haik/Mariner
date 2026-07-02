@@ -85,6 +85,95 @@ def bilinear_interp(x_grid: np.ndarray, y_grid: np.ndarray, values_2d: np.ndarra
     return c0 + y_w * (c1 - c0)
 
 @njit(cache=True)
+def bilinear_interp_2d(x_vals: np.ndarray, y_vals: np.ndarray, z_matrix: np.ndarray, 
+                       x_target: float, y_target: float) -> float:
+    """
+    High-speed 2D bilinear interpolation for the 4D Bellman solver.
+    x_vals: SoC grid (1D)
+    y_vals: P_fc grid (1D)
+    z_matrix: Expected future costs (2D array of shape [len(x_vals), len(y_vals)])
+    """
+    # 1. Clamp targets to grid boundaries (prevent extrapolation errors)
+    x_t = max(x_vals[0], min(x_vals[-1], x_target))
+    y_t = max(y_vals[0], min(y_vals[-1], y_target))
+    
+    # 2. Find indices using searchsorted
+    x_idx = np.searchsorted(x_vals, x_t, side='right') - 1
+    y_idx = np.searchsorted(y_vals, y_t, side='right') - 1
+    
+    x_idx = max(0, min(len(x_vals) - 2, x_idx))
+    y_idx = max(0, min(len(y_vals) - 2, y_idx))
+    
+    # 3. Extract boundary coordinates
+    x1, x2 = x_vals[x_idx], x_vals[x_idx + 1]
+    y1, y2 = y_vals[y_idx], y_vals[y_idx + 1]
+    
+    # 4. Extract matrix values
+    q11 = z_matrix[x_idx, y_idx]
+    q21 = z_matrix[x_idx + 1, y_idx]
+    q12 = z_matrix[x_idx, y_idx + 1]
+    q22 = z_matrix[x_idx + 1, y_idx + 1]
+    
+    # 5. Interpolate
+    denom = (x2 - x1) * (y2 - y1)
+    if denom == 0.0:
+        return q11 # Safety fallback
+        
+    f_xy = (q11 * (x2 - x_t) * (y2 - y_t) +
+            q21 * (x_t - x1) * (y2 - y_t) +
+            q12 * (x2 - x_t) * (y_t - y1) +
+            q22 * (x_t - x1) * (y_t - y1)) / denom
+            
+    return f_xy
+
+@njit(cache=True)
+def calc_cost_operational(n_active: int, p_fc: float, p_nom: float, tau_fc: float, 
+                          alpha_fc: float, k_fc: float, k_h2: float, 
+                          a0: float, a1: float, a2: float, dt: float) -> float:
+    """Calculates continuous H2 consumption and baseline electrochemical degradation."""
+    if n_active <= 0:
+        return np.inf if p_fc > 0 else 0.0
+        
+    p_module = p_fc / n_active
+    m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
+    d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
+    c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
+    
+    return n_active * c_o_rate * dt
+
+@njit(cache=True)
+def calc_cost_switching(n_active: int, n_prev: int, k_fc: float, S_max: float) -> float:
+    """Calculates the discrete start/stop penalty for modules."""
+    k_s = k_fc / S_max
+    return k_s * abs(n_active - n_prev)
+
+@njit(cache=True)
+def calc_cost_battery(p_batt: float, dt: float, C_rep: float, E_life: float) -> float:
+    """Calculates the bidirectional wear-and-tear on the battery pack."""
+    return C_rep * (abs(p_batt) * (dt / 3600.0)) / E_life
+
+@njit(cache=True)
+def calc_cost_transient(n_curr: int, n_prev: int, p_fc_curr: float, p_fc_prev: float, lambda_trans: float) -> float:
+    """
+    Calculates the transient penalty based on power fluctuation per active module.
+    Ignores startup/shutdown penalties as they are handled by calc_cost_switching.
+    """
+    if n_curr <= 0:
+        return 0.0
+        
+    p_curr = p_fc_curr / n_curr
+    
+    # If the system was off previously, p_prev is 0. 
+    # To avoid double-penalizing the initial startup from a dead state,
+    # we enforce 0 transient cost if n_prev was 0.
+    if n_prev <= 0:
+        return 0.0
+        
+    p_prev = p_fc_prev / n_prev
+    
+    return lambda_trans * n_curr * abs(p_curr - p_prev)
+
+@njit(cache=True)
 def get_c_min_kwh(p_max: float, p_nom: float, tau_fc: float, alpha_fc: float, 
                    k_fc: float, k_h2: float, a0: float, a1: float, a2: float) -> float:
     """

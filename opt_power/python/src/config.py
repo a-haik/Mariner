@@ -26,9 +26,11 @@ class SimConfig:
     # Degradation & Cost Coefficients
     tau_fc: float = 50000.0    # Expected service life at steady nominal operation [Hours]
     S_max: float = 4000.0      # Maximum start/stop cycles before failure
-    k_fc: float = 75000.0      # FC module replacement cost [€]
+    c_fc: float = 750          # FC module replacement cost [€/kW]
     k_h2: float = 4.0          # Hydrogen fuel cost [€/kg]
     alpha_fc: float = 1.0      # Degradation penalty factor for off-nominal loads
+    delta_vlc: float = 1.79e-6 # Voltage drop rate [V/kW]
+    v_drop_max: float = 0.07   # Max permitted voltage drop (10% of nominal voltage)
     
     # Hydrogen Consumption Curve Coefficients (m_dot_H2 = a0 + a1*p + a2*p^2)
     a0: float = 55.8460e-3     # [g/s]
@@ -45,8 +47,8 @@ class SimConfig:
     soc_initial: float = 0.5   # Starting State of Charge (50%)
     soc_target: float = 0.5    # Target terminal State of Charge
     
-    pb_max: float = 6000.0   # Maximum discharge limit [kW] (Assumed 2C rate)
-    pb_min: float = -6000.0  # Maximum charge limit [kW]
+    pb_max: float = 3000.0   # Maximum discharge limit [kW] (Assumed 2C rate)
+    pb_min: float = -3000.0  # Maximum charge limit [kW]
     n_cycles_rated: float = 12000.0 # Manufacturer rated cycle life
     dod_rated: float = 0.8     # Depth of discharge for rated cycles
 
@@ -62,10 +64,11 @@ class SimConfig:
 
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
 
-    N_Pd: int = 16         # Number of discrete load levels (Power demand Grid)
+    N_Pd: int = 8         # Number of discrete load levels (Power demand Grid)
     N_n: int = 16          # Number of fuel cell modules on board
-    N_soc: int = 61       # Grid resolution for SoC dimension (SoC Grid)
-    N_pb: int = 51        # Grid resolution for P_batt dimension (P_batt grid)
+    N_soc: int = 31       # Grid resolution for SoC dimension (SoC Grid)
+    N_pb: int = 31        # Grid resolution for P_batt dimension (P_batt grid)
+    N_pfc: int = 13                    # Grid resolution for previous P_fc dimension
 
     # =========================================================================
     # 6. DIRECTORY & PATH MANAGEMENT
@@ -104,11 +107,20 @@ class SimConfig:
         # 1D discrete array for the State of Charge dimension
         object.__setattr__(self, 'pb_vals', np.linspace(self.pb_min, self.pb_max, self.N_pb))
 
+        # 1D discrete array for the previous Fuel Cell power dimension
+        object.__setattr__(self, 'pfc_vals', np.linspace(0.0, self.N_n * self.p_max, self.N_pfc))
+
+        # Total fuel cell stacks replacement cost [€]
+        object.__setattr__(self, 'k_fc', self.c_fc * self.p_max)
+
         # Total battery replacement cost [€]
         object.__setattr__(self, 'C_rep', self.C_bat * self.c_bat_kwh)
         
         # Total lifetime energy throughput (Doubled for bidirectional wear calculation) [kWh]
         object.__setattr__(self, 'E_life', 2.0 * self.n_cycles_rated * self.dod_rated * self.C_bat)
+
+        # Financial penalty per kW of fuel cell power variation
+        object.__setattr__(self, 'lambda_trans', self.delta_vlc * self.c_fc / self.v_drop_max)
 
         if self.p_max <= 0 or self.p_nom <= 0:
             raise ValueError("Power limits p_max and p_nom must be strictly positive.")

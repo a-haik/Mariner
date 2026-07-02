@@ -13,6 +13,14 @@ from src.controllers.hybrid_controllers import (
     HybridValueControl
 )
 
+from src.controllers.augmented_hybrid_controllers import (
+    AugmentedFCLockedControl,
+    AugmentedPolicyControl,
+    AugmentedValueControl
+)
+
+from src.controllers.augmented_baseline_controllers import AugmentedSDPBaselineControl
+
 __all__ = [
     "build_approach",
     "ControlLaw", 
@@ -22,4 +30,8 @@ __all__ = [
     "HybridFCLockedControl",
     "HybridPolicyControl",
     "HybridValueControl",
+    "AugmentedSDPBaselineControl",
+    "AugmentedFCLockedControl",
+    "AugmentedPolicyControl",
+    "AugmentedValueControl"
 ]

@@ -136,6 +136,7 @@ class VoyageBenchmarker:
             'Operating Cost [€]': sum(sim.history.get('cost_o', [0.0])),
             'Switching Cost [€]': sum(sim.history.get('cost_s', [0.0])),
             'Battery Cost [€]': sum(sim.history.get('cost_bat', [0.0])),
+            'Transient Cost [€]': sum(sim.history.get('cost_tr', [0.0])), 
             'Term. Switch Cost [€]': sim_results['terminal_n_cost'],
             'Term. SoC Cost [€]': sim_results['terminal_soc_cost'],
             'Offline Compute Time [s]': offline_time,

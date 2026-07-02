@@ -49,6 +49,7 @@ def build_approach(controller_cls, plant_cls=HybridPlant, solver_cls=None, is_ma
             'p_grid': mc['levels'],
             'n_vals': cfg.n_vals,
             'soc_vals': getattr(cfg, 'soc_vals', None),
+            'pfc_vals': getattr(cfg, 'pfc_vals', None),
             'policy_matrix': policy_n,
             'policy': policy_n,
             'policy_n': policy_n,

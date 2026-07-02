@@ -221,9 +221,15 @@ def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0
     cum_cost_s = df['cost_s'].cumsum().tolist()
     cum_cost_total = df['cost_total'].cumsum().tolist()
     
+    # Check for battery
     has_battery = 'p_batt_actual' in df.columns and 'soc' in df.columns
     if has_battery:
         cum_cost_bat = df['cost_bat'].cumsum().tolist()
+
+    # Check for transient costs
+    has_transient = 'cost_tr' in df.columns
+    if has_transient:
+        cum_cost_tr = df['cost_tr'].cumsum().tolist()
 
     # --- APPLY TERMINAL JUMP (t = T) ---
     term_n_cost, term_soc_cost = terminal_costs
@@ -236,6 +242,9 @@ def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0
         
         if has_battery:
             cum_cost_bat.append(cum_cost_bat[-1] + term_soc_cost)
+            
+        if has_transient:
+            cum_cost_tr.append(cum_cost_tr[-1]) # Transient cost doesn't jump
             
         cum_cost_total.append(cum_cost_total[-1] + term_n_cost + term_soc_cost)
 
@@ -333,7 +342,11 @@ def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0
     
     if has_battery:
         ax3.plot(t_hours_jump, cum_cost_bat, label='Battery Degradation', color='darkorange', linestyle='--')
-    
+
+    # Add the transient cost plot
+    if has_transient:
+        ax3.plot(t_hours_jump, cum_cost_tr, label='Transient Cost', color='mediumorchid', linestyle='--')
+        
     ax3.set_ylabel("Cumulative Cost [€]")
     ax3.set_yscale('symlog', linthresh=1.0)
     

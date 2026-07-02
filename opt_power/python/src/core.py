@@ -7,6 +7,7 @@ class State:
     P_d: float          # Power demand [kW]
     n_prev: int         # Modules active in the previous time step
     soc: float          # Battery State of Charge [0.0 to 1.0]
+    p_fc_prev: float = 0.0 # Previous total fuel cell power [kW]
 
 @dataclass
 class Action:

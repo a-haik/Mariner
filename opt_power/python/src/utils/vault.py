@@ -35,6 +35,7 @@ class ModelVault:
         """
         Strips out complex objects (Numba/NumPy arrays) AND environment-specific
         paths to guarantee cross-machine determinism.
+        Tracks NumPy array shapes so grid resolution changes trigger recomputes.
         """
         primitives = {}
         config_dict = asdict(config) if hasattr(config, '__dataclass_fields__') else config.__dict__
@@ -47,6 +48,10 @@ class ModelVault:
                 continue
             if isinstance(v, (int, float, str, bool)):
                 primitives[k] = v
+            # NEW: Safely hash array shapes so grid resolution changes trigger a recompute
+            elif isinstance(v, np.ndarray):
+                primitives[f"{k}_shape"] = v.shape
+                
         return primitives
 
     # =========================================================================
