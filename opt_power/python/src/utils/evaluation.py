@@ -54,16 +54,19 @@ class VoyageBenchmarker:
         self.vault = ModelVault(self.config.vault_dir)
 
     def _get_or_compute_models(self, train_days: list, solver_cls, horizon_length: int):
+        total_offline_time = 0.0
+        
         # --- 1. MARKOV MODEL ---
         markov_hash = self.vault.generate_markov_hash(train_days, self.config)
-        mc_model = self.vault.load_markov_model(markov_hash)
+        loaded_mc = self.vault.load_markov_model(markov_hash)
         
-        if mc_model is None:
+        if loaded_mc is not None:
+            mc_model, mc_time = loaded_mc
+        else:
             print(f" [Vault] Cache MISS: Training Markov Chain for days {train_days}...")
             train_t, train_pd = [], []
             for d in train_days:
                 data = self.fleet_cache[d]
-                # CRITICAL FIX: Offset the time so days are sequential, not stacked!
                 t_off = train_t[-1][-1] if train_t else 0.0
                 train_t.append(data['t'] + t_off)
                 train_pd.append(data['Pd'])
@@ -72,26 +75,41 @@ class VoyageBenchmarker:
             pd_concat = np.concatenate(train_pd)
             
             ds_train = downsample_block_mean(t_concat, pd_concat, self.config.Ts, align='t0')
-            mc_model = fit_dtmc(ds_train['Pd'], self.config.N_Pd, self.config.alpha_mc)
-            mc_model['Delta'] = self.config.Ts  
             
-            self.vault.save_markov_model(markov_hash, mc_model, train_days)
+            # Start Markov Timer
+            start_t = time.perf_counter()
+            mc_model = fit_dtmc(ds_train['Pd'], self.config.N_Pd, self.config.alpha_mc)
+            mc_time = time.perf_counter() - start_t
+            
+            mc_model['Delta'] = self.config.Ts  
+            self.vault.save_markov_model(markov_hash, mc_model, train_days, offline_time=mc_time)
+            
+        total_offline_time += mc_time
         
         # --- 2. SDP BELLMAN MATRICES ---
         raw_solution = None
         if solver_cls is not None:
             sdp_hash = self.vault.generate_sdp_hash(markov_hash, solver_cls.__name__, horizon_length, self.config)
-            raw_solution = self.vault.load_sdp_model(sdp_hash)
+            loaded_sdp = self.vault.load_sdp_model(sdp_hash)
             
-            if raw_solution is None:
+            if loaded_sdp is not None:
+                raw_solution, sdp_time = loaded_sdp
+            else:
                 print(f" [Vault] Cache MISS: Solving SDP Bellman matrices ({solver_cls.__name__})...")
                 solver = solver_cls(self.config, mc_model)
-                raw_solution = solver.compute_solution(horizon_length)
-                self.vault.save_sdp_model(sdp_hash, markov_hash, solver_cls.__name__, raw_solution)
                 
-        return mc_model, raw_solution
+                # Start Bellman Timer
+                start_t = time.perf_counter()
+                raw_solution = solver.compute_solution(horizon_length)
+                sdp_time = time.perf_counter() - start_t
+                
+                self.vault.save_sdp_model(sdp_hash, markov_hash, solver_cls.__name__, raw_solution, offline_time=sdp_time)
+                
+            total_offline_time += sdp_time
+            
+        return mc_model, raw_solution, total_offline_time
 
-    def _run_simulation(self, approach_factory, mc_model, raw_solution, test_pd_micro, test_pd_macro, horizon_length):
+    def _run_simulation(self, approach_factory, mc_model, raw_solution, test_pd_micro, test_pd_macro, horizon_length, offline_time):
         """Phase 2: Bypasses training entirely and just executes the continuous environment."""
         is_macro_returned = approach_factory.is_macro
         
@@ -109,15 +127,19 @@ class VoyageBenchmarker:
             
         sim = Simulator(self.config, test_pd, plant, dt_override=dt_override)
         start_time = time.perf_counter()
-        sim.run(controller)
+        sim_results = sim.run(controller)
         calc_time = time.perf_counter() - start_time
         
+        # Include offline_time in the final dictionary!
         metrics = {
-            'Total Cost [€]': sum(sim.history.get('cost_total', [0.0])),
+            'Total Cost [€]': sim_results['total_cost'],
             'Operating Cost [€]': sum(sim.history.get('cost_o', [0.0])),
             'Switching Cost [€]': sum(sim.history.get('cost_s', [0.0])),
             'Battery Cost [€]': sum(sim.history.get('cost_bat', [0.0])),
-            'Computation Time [s]': calc_time
+            'Term. Switch Cost [€]': sim_results['terminal_n_cost'],
+            'Term. SoC Cost [€]': sim_results['terminal_soc_cost'],
+            'Offline Compute Time [s]': offline_time,
+            'Online Compute Time [s]': calc_time        
         }
         
         telemetry_df = pd.DataFrame(sim.history)
@@ -132,11 +154,11 @@ class VoyageBenchmarker:
         
         for name, factory in approaches.items():
             solver_cls = getattr(factory, 'solver_cls', None)
-            mc_model, raw_solution = self._get_or_compute_models(train_days, solver_cls, horizon)
             
+            mc_model, raw_solution, offline_time = self._get_or_compute_models(train_days, solver_cls, horizon)
             metrics, df = self._run_simulation(
                 factory, mc_model, raw_solution, 
-                test_data['Pd'], ds_test['Pd'], horizon
+                test_data['Pd'], ds_test['Pd'], horizon, offline_time
             )
             
             results[name] = metrics
@@ -157,10 +179,10 @@ class VoyageBenchmarker:
             
             run_id = f"Day {test_day}"
             
-            mc_model, raw_solution = self._get_or_compute_models(train_days, solver_cls, horizon)
+            mc_model, raw_solution, offline_time = self._get_or_compute_models(train_days, solver_cls, horizon)
             metrics, df = self._run_simulation(
                 approach_factory, mc_model, raw_solution, 
-                test_data['Pd'], ds_test['Pd'], horizon
+                test_data['Pd'], ds_test['Pd'], horizon, offline_time
             )
             
             results[run_id] = metrics
@@ -184,10 +206,10 @@ class VoyageBenchmarker:
             
             run_id = f"Train {train_days[-1]} -> Test {test_day}"
             
-            mc_model, raw_solution = self._get_or_compute_models(train_days, solver_cls, horizon)
+            mc_model, raw_solution, offline_time = self._get_or_compute_models(train_days, solver_cls, horizon)
             metrics, df = self._run_simulation(
                 approach_factory, mc_model, raw_solution, 
-                test_data['Pd'], ds_test['Pd'], horizon
+                test_data['Pd'], ds_test['Pd'], horizon, offline_time
             )
             
             results[run_id] = metrics

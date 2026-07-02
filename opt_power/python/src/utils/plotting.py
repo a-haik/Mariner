@@ -208,23 +208,36 @@ def plot_markov_matrix(mc_model: dict, title: str = "Markov Transition Matrix", 
             plt.savefig(f'figures/{safe_title}.png', dpi=300)
         plt.show()
 
-def plot_simulation_dashboard(df: pd.DataFrame, mc_model=None, title: str = "Simulation Dashboard", indiv: bool = False, save_plot: bool = False):
+def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0), mc_model=None, title: str = "Simulation Dashboard", indiv: bool = False, save_plot: bool = False):
     """
-    Dynamically generates a comprehensive dashboard (or individual plots) of a single simulation run.
-    - If mc_model is None: 2x2 Grid Layout.
-    - If mc_model is provided: 5-Plot GridSpec Layout (Module count spans top row).
+    Dynamically generates a comprehensive dashboard of a single simulation run.
+    Now supports Phase 3 terminal boundary condition visualization.
     """
-    # 1. Prepare derived data
     t_hours = df['time'] / 3600.0  
     p_module = np.where(df['n_active'] > 0, df['p_fc_actual'] / df['n_active'], 0.0)
     
-    cum_cost_o = df['cost_o'].cumsum()
-    cum_cost_s = df['cost_s'].cumsum()
-    cum_cost_total = df['cost_total'].cumsum()
+    t_hours_jump = t_hours.tolist()
+    cum_cost_o = df['cost_o'].cumsum().tolist()
+    cum_cost_s = df['cost_s'].cumsum().tolist()
+    cum_cost_total = df['cost_total'].cumsum().tolist()
     
     has_battery = 'p_batt_actual' in df.columns and 'soc' in df.columns
     if has_battery:
-        cum_cost_bat = df['cost_bat'].cumsum()
+        cum_cost_bat = df['cost_bat'].cumsum().tolist()
+
+    # --- APPLY TERMINAL JUMP (t = T) ---
+    term_n_cost, term_soc_cost = terminal_costs
+    if term_n_cost != 0.0 or term_soc_cost != 0.0:
+        # Duplicate the final time coordinate to create a sharp vertical line
+        t_hours_jump.append(t_hours_jump[-1])
+        
+        cum_cost_o.append(cum_cost_o[-1]) # Operating cost doesn't jump
+        cum_cost_s.append(cum_cost_s[-1] + term_n_cost)
+        
+        if has_battery:
+            cum_cost_bat.append(cum_cost_bat[-1] + term_soc_cost)
+            
+        cum_cost_total.append(cum_cost_total[-1] + term_n_cost + term_soc_cost)
 
     # 2. Setup Figure Layout
     fig = None
@@ -312,12 +325,14 @@ def plot_simulation_dashboard(df: pd.DataFrame, mc_model=None, title: str = "Sim
     # --- PANE 3: Cumulative Economics ---
     # =========================================================
     current_fig, ax3 = get_ax(ax_cost)
-    ax3.plot(t_hours, cum_cost_total, label='Total Cost', color='black', linewidth=2.5)
-    ax3.plot(t_hours, cum_cost_o, label='Operating Cost (FC)', color='royalblue', linestyle='--')
-    ax3.plot(t_hours, cum_cost_s, label='Switching Cost', color='crimson', linestyle='--')
+    
+    # Use t_hours_jump and our new appended lists
+    ax3.plot(t_hours_jump, cum_cost_total, label='Total Cost', color='black', linewidth=2.5)
+    ax3.plot(t_hours_jump, cum_cost_o, label='Operating Cost (FC)', color='royalblue', linestyle='--')
+    ax3.plot(t_hours_jump, cum_cost_s, label='Switching Cost', color='crimson', linestyle='--')
     
     if has_battery:
-        ax3.plot(t_hours, cum_cost_bat, label='Battery Degradation', color='darkorange', linestyle='--')
+        ax3.plot(t_hours_jump, cum_cost_bat, label='Battery Degradation', color='darkorange', linestyle='--')
     
     ax3.set_ylabel("Cumulative Cost [€]")
     ax3.set_yscale('symlog', linthresh=1.0)
@@ -342,9 +357,32 @@ def plot_simulation_dashboard(df: pd.DataFrame, mc_model=None, title: str = "Sim
         ax4.plot(t_hours, df['soc'] * 100, label='State of Charge', color='black', linewidth=2)
         ax4.set_ylabel("SoC [%]")
         ax4.set_ylim([0, 100])
-        ax4.axhline(50, color='black', linewidth=1, linestyle='--') 
-        ax4.axhline(80, color='black', linewidth=1, linestyle='--') 
-        ax4.axhline(20, color='black', linewidth=1, linestyle='--') 
+        # 1. Dynamically fetch safety limits from config (defaults fallback to 20% / 80%)
+        soc_min = getattr(config, 'soc_min', 0.2) * 100
+        soc_max = getattr(config, 'soc_max', 0.8) * 100
+        soc_init = getattr(config, 'soc_initial', 0.5) * 100
+        
+        # Plot safety boundary lines
+        ax4.axhline(soc_max, color='black', linewidth=1, linestyle='--', alpha=0.7)
+        ax4.axhline(soc_min, color='black', linewidth=1, linestyle='--', alpha=0.7)
+        
+        # 2. Handle Initial and Target SoC Guidelines dynamically
+        if hasattr(config, 'soc_target'):
+            soc_tgt = config.soc_target * 100
+            
+            # Check if initial and target are practically identical (using tolerance for floats)
+            if abs(soc_tgt - soc_init) < 1e-3:
+                ax4.axhline(soc_tgt, color='blue', linewidth=1.5, linestyle='-.', 
+                            label=f'Initial & Target SoC ({int(soc_tgt)}%)')
+            else:
+                ax4.axhline(soc_init, color='gray', linewidth=1.5, linestyle=':', 
+                            label=f'Initial SoC ({int(soc_init)}%)')
+                ax4.axhline(soc_tgt, color='blue', linewidth=1.5, linestyle='-.', 
+                            label=f'Target SoC ({int(soc_tgt)}%)')
+        else:
+            # Fallback if no target exists but we still want to show where it started
+            ax4.axhline(soc_init, color='gray', linewidth=1.5, linestyle=':', 
+                        label=f'Initial SoC ({int(soc_init)}%)')
         
         # Right Axis: Battery Power Area Plot
         ax4_twin = ax4.twinx()

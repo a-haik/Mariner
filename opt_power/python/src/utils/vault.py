@@ -64,8 +64,8 @@ class ModelVault:
         sig_string = json.dumps(run_signature, sort_keys=True)
         return hashlib.sha256(sig_string.encode('utf-8')).hexdigest()
 
-    def save_markov_model(self, hash_id: str, mc_model: dict, train_days: list):
-        """Saves the Markov matrix and state levels."""
+    def save_markov_model(self, hash_id: str, mc_model: dict, train_days: list, offline_time: float):
+        """Saves the Markov matrix, state levels, and computation time."""
         npz_path = os.path.join(self.markov_dir, f"{hash_id}.npz")
         
         # Unpack the dictionary and save as named arrays
@@ -73,11 +73,12 @@ class ModelVault:
         
         self.registry["markov"][hash_id] = {
             "train_days": sorted(train_days),
-            "file_path": npz_path
+            "file_path": npz_path,
+            "offline_time": offline_time
         }
         self._save_registry()
 
-    def load_markov_model(self, hash_id: str) -> dict:
+    def load_markov_model(self, hash_id: str):
         if hash_id not in self.registry["markov"]:
             return None
             
@@ -86,8 +87,10 @@ class ModelVault:
             return None
             
         with np.load(npz_path) as data:
-            # BUG FIX: .copy() forces the arrays into RAM before the file closes!
-            return {key: data[key].copy() for key in data.files}
+            model = {key: data[key].copy() for key in data.files}
+            
+        offline_time = self.registry["markov"][hash_id].get("offline_time", 0.0)
+        return model, offline_time
 
     # =========================================================================
     # 2. SDP BELLMAN MODEL MANAGEMENT
@@ -104,21 +107,21 @@ class ModelVault:
         sig_string = json.dumps(run_signature, sort_keys=True)
         return hashlib.sha256(sig_string.encode('utf-8')).hexdigest()
 
-    def save_sdp_model(self, hash_id: str, markov_hash: str, solver_name: str, raw_solution: tuple):
-        """Saves the Bellman matrices. raw_solution is a tuple of (policy, V) or (policy_n, policy_pbatt, V)."""
+    def save_sdp_model(self, hash_id: str, markov_hash: str, solver_name: str, raw_solution: tuple, offline_time: float):
+        """Saves the Bellman matrices and computation time."""
         npz_path = os.path.join(self.sdp_dir, f"{hash_id}.npz")
         
-        # We unpack the tuple dynamically so it supports both baseline (2 arrays) and hybrid (3 arrays)
         np.savez_compressed(npz_path, *raw_solution)
         
         self.registry["sdp"][hash_id] = {
             "markov_hash": markov_hash,
             "solver": solver_name,
-            "file_path": npz_path
+            "file_path": npz_path,
+            "offline_time": offline_time
         }
         self._save_registry()
 
-    def load_sdp_model(self, hash_id: str) -> tuple:
+    def load_sdp_model(self, hash_id: str):
         if hash_id not in self.registry["sdp"]:
             return None
             
@@ -127,5 +130,7 @@ class ModelVault:
             return None
             
         with np.load(npz_path) as data:
-            # BUG FIX: .copy() prevents lazy-loading corruption for heavy matrices
-            return tuple(data[f"arr_{i}"].copy() for i in range(len(data.files)))
+            raw_solution = tuple(data[f"arr_{i}"].copy() for i in range(len(data.files)))
+            
+        offline_time = self.registry["sdp"][hash_id].get("offline_time", 0.0)
+        return raw_solution, offline_time

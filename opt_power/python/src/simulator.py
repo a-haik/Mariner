@@ -80,4 +80,8 @@ class Simulator:
         # Add boundary conditions to the true operational cost
         total_cost += (terminal_n_cost + terminal_soc_cost)
 
-        return total_cost
+        return {
+            'total_cost': total_cost,
+            'terminal_n_cost': terminal_n_cost,
+            'terminal_soc_cost': terminal_soc_cost
+        }
