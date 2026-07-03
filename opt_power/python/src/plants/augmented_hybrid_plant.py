@@ -63,7 +63,7 @@ class AugmentedHybridPlant(BasePlant):
         )
 
         # 5. State Kinematics (Integrate State of Charge)
-        soc_next = state.soc - (p_batt_real * (dt / 3600.0)) / self.config.C_bat
+        soc_next = state.soc - (p_batt_real * (dt / 3600.0)) / self.config.Q_bat
         soc_next = max(0.0, min(1.0, soc_next)) # Absolute floating-point safety bound
 
         # 6. Construct Next State (Propagating the new p_fc_actual into p_fc_prev)

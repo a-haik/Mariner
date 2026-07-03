@@ -3,6 +3,7 @@ import numpy as np
 from numba import njit
 from typing import Tuple
 from src.config import SimConfig
+from src.utils.math_utils import calc_cost_operational, calc_cost_switching
 
 @njit(cache=True)
 def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray, 
@@ -21,7 +22,6 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
     # EXPAND V matrix to size T+1. Policy stays T.
     V = np.full((T + 1, p_size, n_size), np.inf, dtype=np.float64)
     policy = np.zeros((T, p_size, n_size), dtype=np.int32)
-    k_s = k_fc / S_max
 
     # Cache for the Expected Future Cost optimization
     exp_future_cache = np.empty(n_size, dtype=np.float64)
@@ -31,7 +31,7 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
         for j in range(n_size):
             n_val = n_vals[j]
             if apply_terminal_n_cost:
-                V[T, i, j] = k_s * abs(n_val - nT)
+                V[T, i, j] = calc_cost_switching(nT, n_val, k_fc, S_max)
             else:
                 V[T, i, j] = 0.0
 
@@ -42,8 +42,6 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
 
             # OPTIMIZATION: Calculate Expected Future Cost for all possible NEXT actions
             for a_idx in range(n_size):
-                if n_vals[a_idx] <= 0:
-                    continue
                 s = 0.0
                 for i_next in range(p_size):
                     s += transition_matrix[i, i_next] * V[t + 1, i_next, a_idx]
@@ -52,8 +50,6 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
             # Loop over current states
             for j in range(n_size):
                 n_val = n_vals[j]
-                if n_val <= 0:
-                    continue
                 
                 best_cost = np.inf
                 best_action_idx = 0  
@@ -61,24 +57,19 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                 # Loop over possible ACTIONS (n_next)
                 for a_idx in range(n_size):
                     n_next = n_vals[a_idx]
-                    if n_next <= 0:
-                        continue
-                        
-                    p_module = p_val / n_next
                     
-                    if p_module > p_max:
-                        total_cost = np.inf
-                    else:
-                        exp_future = exp_future_cache[a_idx]
+                    # Hardware Limits Filtering (Identical to augmented logic)
+                    if n_next > 0 and (p_val / n_next) > p_max:
+                        continue # Module Overload
+                    if n_next == 0 and p_val > 0:
+                        continue # Can't draw power if all modules are off
+                    
+                    exp_future = exp_future_cache[a_idx]
 
-                        m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
-                        d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
-                        c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
-                        
-                        C_o = n_next * c_o_rate * Ts
-                        C_s = k_s * abs(n_next - n_val)
+                    C_o = calc_cost_operational(n_next, p_val, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+                    C_s = calc_cost_switching(n_next, n_val, k_fc, S_max)
                             
-                        total_cost = C_o + C_s + exp_future
+                    total_cost = C_o + C_s + exp_future
                         
                     if total_cost < best_cost:
                         best_cost = total_cost

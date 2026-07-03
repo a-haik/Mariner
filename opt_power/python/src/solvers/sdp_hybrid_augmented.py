@@ -16,7 +16,7 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                              pfc_vals: np.ndarray, pb_vals: np.ndarray, transition_matrix: np.ndarray, 
                              Ts: float, p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                              tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
-                             C_bat: float, C_rep: float, E_life: float, lambda_trans: float,
+                             Q_bat: float, C_rep: float, E_life: float, lambda_trans: float,
                              soc_min: float, soc_max: float, nT: int, apply_terminal_n_cost: bool,
                              soc_target: float, apply_terminal_soc_cost: bool):
     """
@@ -49,7 +49,7 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                 soc_val = soc_vals[k]
                 term_soc_cost = 0.0
                 if apply_terminal_soc_cost:
-                    delta_e_kwh = (soc_target - soc_val) * C_bat
+                    delta_e_kwh = (soc_target - soc_val) * Q_bat
                     term_soc_cost = delta_e_kwh * c_min_kwh
                     
                 for l in range(pfc_size):
@@ -104,7 +104,7 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                                     continue # Can't draw power if all modules are off
                                 
                                 # 2. State Kinematics (Project SoC)
-                                soc_curr = soc_prev - (pbatt * (Ts / 3600.0)) / C_bat
+                                soc_curr = soc_prev - (pbatt * (Ts / 3600.0)) / Q_bat
                                 if soc_curr < soc_min or soc_curr > soc_max:
                                     continue # Battery bounds
                                     
@@ -159,7 +159,7 @@ class AugmentedHybridSDPSolver:
             a0=float(self.config.a0),
             a1=float(self.config.a1),
             a2=float(self.config.a2),
-            C_bat=float(self.config.C_bat),
+            Q_bat=float(self.config.Q_bat),
             C_rep=float(self.config.C_rep),
             E_life=float(self.config.E_life),
             lambda_trans=float(self.config.lambda_trans), # <--- NEW

@@ -4,7 +4,14 @@ from numba import njit
 from src.controllers.base import ControlLaw
 from src.core import State, Action
 from src.config import SimConfig
-from src.utils.math_utils import nearest_index_1d, bilinear_interp, linear_interp_1d
+from src.utils.math_utils import (
+    nearest_index_1d, 
+    bilinear_interp, 
+    linear_interp_1d,
+    calc_cost_operational,
+    calc_cost_switching,
+    calc_cost_battery
+)
 
 class HybridFCLockedControl(ControlLaw):
     """
@@ -80,7 +87,7 @@ class HybridPolicyControl(ControlLaw):
 def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: float, 
                           p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                           tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
-                          C_bat: float, C_rep: float, E_life: float, soc_min: float, soc_max: float,
+                          Q_bat: float, C_rep: float, E_life: float, soc_min: float, soc_max: float,
                           pb_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
                           transition_row: np.ndarray, V_next: np.ndarray):
     """JIT Engine evaluating true continuous cost + interpolated expected future cost."""
@@ -98,7 +105,6 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
                 s += transition_row[i_next] * V_next[i_next, a_idx, k_idx]
             exp_v[a_idx, k_idx] = s
 
-    k_s = k_fc / S_max
     best_cost = np.inf
     best_n = n_vals[0]
     best_pbatt = 0.0
@@ -108,7 +114,7 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
         n_next = n_vals[a_idx]
         for pbatt in pb_vals:
             # Kinematics
-            soc_next = soc_real - (pbatt * (Ts / 3600.0)) / C_bat
+            soc_next = soc_real - (pbatt * (Ts / 3600.0)) / Q_bat
             if soc_next < soc_min or soc_next > soc_max:
                 continue
 
@@ -116,23 +122,21 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
             if p_fc < 0:
                 continue
                 
-            p_module = p_fc / n_next
-            if p_module > p_max:
+            # Hardware Limits Filtering (Prevents Division by Zero when n=0)
+            if n_next > 0 and (p_fc / n_next) > p_max:
+                continue
+            if n_next == 0 and p_fc > 0:
                 continue
 
-            # Continuous Costs
-            m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
-            d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
-            c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
-
-            C_o = n_next * c_o_rate * Ts
-            C_s = k_s * abs(n_next - n_prev)
-            C_bat_cost = C_rep * (abs(pbatt) * (Ts / 3600.0)) / E_life
+            # Centralized Cost Engine
+            C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+            C_s = calc_cost_switching(n_next, n_prev, k_fc, S_max)
+            C_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
 
             # 1D Interpolation over the pre-calculated expectation array
             exp_future = linear_interp_1d(soc_vals, exp_v[a_idx, :], soc_next)
 
-            total_cost = C_o + C_s + C_bat_cost + exp_future
+            total_cost = C_o + C_s + C_bat + exp_future
             if total_cost < best_cost:
                 best_cost = total_cost
                 best_n = n_next
@@ -172,7 +176,7 @@ class HybridValueControl(ControlLaw):
             p_max=float(self.config.p_max), p_nom=float(self.config.p_nom), k_fc=float(self.config.k_fc),
             k_h2=float(self.config.k_h2), S_max=float(self.config.S_max), tau_fc=float(self.config.tau_fc),
             alpha_fc=float(self.config.alpha_fc), a0=float(self.config.a0), a1=float(self.config.a1),
-            a2=float(self.config.a2), C_bat=float(self.config.C_bat), C_rep=float(self.config.C_rep),
+            a2=float(self.config.a2), Q_bat=float(self.config.Q_bat), C_rep=float(self.config.C_rep),
             E_life=float(self.config.E_life), soc_min=float(self.config.soc_min), soc_max=float(self.config.soc_max),
             pb_vals=self.config.pb_vals, n_vals=self.config.n_vals, soc_vals=self.config.soc_vals,
             transition_row=transition_row, V_next=V_next

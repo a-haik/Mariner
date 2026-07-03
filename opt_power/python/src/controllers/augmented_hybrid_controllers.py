@@ -95,7 +95,7 @@ class AugmentedPolicyControl(ControlLaw):
 def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, pfc_prev: float, Ts: float, 
                                     p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                                     tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
-                                    C_bat: float, C_rep: float, E_life: float, lambda_trans: float, 
+                                    Q_bat: float, C_rep: float, E_life: float, lambda_trans: float, 
                                     soc_min: float, soc_max: float, pb_vals: np.ndarray, n_vals: np.ndarray, 
                                     soc_vals: np.ndarray, pfc_vals: np.ndarray,
                                     transition_row: np.ndarray, V_next: np.ndarray):
@@ -125,7 +125,7 @@ def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: in
         n_curr = n_vals[a_idx]
         for pbatt in pb_vals:
             # Kinematics
-            soc_next = soc_real - (pbatt * (Ts / 3600.0)) / C_bat
+            soc_next = soc_real - (pbatt * (Ts / 3600.0)) / Q_bat
             if soc_next < soc_min or soc_next > soc_max:
                 continue
 
@@ -187,7 +187,7 @@ class AugmentedValueControl(ControlLaw):
             p_max=float(self.config.p_max), p_nom=float(self.config.p_nom), k_fc=float(self.config.k_fc),
             k_h2=float(self.config.k_h2), S_max=float(self.config.S_max), tau_fc=float(self.config.tau_fc),
             alpha_fc=float(self.config.alpha_fc), a0=float(self.config.a0), a1=float(self.config.a1),
-            a2=float(self.config.a2), C_bat=float(self.config.C_bat), C_rep=float(self.config.C_rep),
+            a2=float(self.config.a2), Q_bat=float(self.config.Q_bat), C_rep=float(self.config.C_rep),
             E_life=float(self.config.E_life), lambda_trans=float(self.config.lambda_trans),
             soc_min=float(self.config.soc_min), soc_max=float(self.config.soc_max),
             pb_vals=self.config.pb_vals, n_vals=self.config.n_vals, soc_vals=self.config.soc_vals, 

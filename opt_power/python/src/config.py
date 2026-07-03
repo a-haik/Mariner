@@ -40,7 +40,7 @@ class SimConfig:
     # =========================================================================
     # 3. BATTERY PHYSICAL PARAMETERS (Hybrid Additions)
     # =========================================================================
-    C_bat: float = 2000.0        # Nominal capacity of the battery pack [kWh]
+    Q_bat: float = 2000.0        # Nominal capacity of the battery pack [kWh]
     c_bat_kwh: float = 250.0   # Replacement cost per kWh [€/kWh]
     soc_min: float = 0.2       # Minimum safe State of Charge (20%)
     soc_max: float = 0.8       # Maximum safe State of Charge (80%)
@@ -99,7 +99,7 @@ class SimConfig:
 
         # --- DERIVED HYBRID CONSTANTS ---
         # 1D discrete array for the module count dimension
-        object.__setattr__(self, 'n_vals', np.arange(1, self.N_n+1, dtype=np.int32))
+        object.__setattr__(self, 'n_vals', np.arange(0, self.N_n+1, dtype=np.int32))
 
         # 1D discrete array for the State of Charge dimension
         object.__setattr__(self, 'soc_vals', np.linspace(self.soc_min, self.soc_max, self.N_soc))
@@ -114,10 +114,10 @@ class SimConfig:
         object.__setattr__(self, 'k_fc', self.c_fc * self.p_max)
 
         # Total battery replacement cost [€]
-        object.__setattr__(self, 'C_rep', self.C_bat * self.c_bat_kwh)
+        object.__setattr__(self, 'C_rep', self.Q_bat * self.c_bat_kwh)
         
         # Total lifetime energy throughput (Doubled for bidirectional wear calculation) [kWh]
-        object.__setattr__(self, 'E_life', 2.0 * self.n_cycles_rated * self.dod_rated * self.C_bat)
+        object.__setattr__(self, 'E_life', 2.0 * self.n_cycles_rated * self.dod_rated * self.Q_bat)
 
         # Financial penalty per kW of fuel cell power variation
         object.__setattr__(self, 'lambda_trans', self.delta_vlc * self.c_fc / self.v_drop_max)

@@ -3,6 +3,7 @@ from typing import Tuple, Dict
 from src.config import SimConfig
 from src.core import State, Action
 from src.plants.base import BasePlant
+from src.utils.math_utils import calc_cost_operational, calc_cost_switching
 
 class FuelCellOnlyPlant(BasePlant):
     """
@@ -16,23 +17,19 @@ class FuelCellOnlyPlant(BasePlant):
         n_active = action.n_modules
         p_fc_actual = state.P_d  # <-- UNIFIED NOMENCLATURE
         
-        if n_active <= 0:
-            c_o = float('inf') if p_fc_actual > 0 else 0.0
-            p_module = 0.0
-        else:
-            p_module = p_fc_actual / n_active
-            
-            # Exact Continuous Electrochemical Costs
-            m_dot_h2 = (self.config.a0 + self.config.a1 * p_module + self.config.a2 * (p_module ** 2))
-            d_fc = (1.0 / (3600.0 * self.config.tau_fc)) * (
-                1.0 + self.config.alpha_fc * ((p_module - self.config.p_nom) ** 2) / (self.config.p_nom ** 2)
-            )
-            c_o_rate = (self.config.k_h2 * m_dot_h2 / 1000.0) + (self.config.k_fc * d_fc)
-            c_o = n_active * c_o_rate * dt
+        # Exact Continuous Costs (Centralized Engine)
+        c_o = calc_cost_operational(
+            n_active=n_active, p_fc=p_fc_actual, p_nom=self.config.p_nom, 
+            tau_fc=self.config.tau_fc, alpha_fc=self.config.alpha_fc, 
+            k_fc=self.config.k_fc, k_h2=self.config.k_h2, 
+            a0=self.config.a0, a1=self.config.a1, a2=self.config.a2, dt=dt
+        )
 
         # Switching Cost
-        k_s = self.config.k_fc / self.config.S_max
-        c_s = k_s * abs(n_active - state.n_prev)
+        c_s = calc_cost_switching(
+            n_active=n_active, n_prev=state.n_prev, 
+            k_fc=self.config.k_fc, S_max=self.config.S_max
+        )
         
         next_state = State(P_d=0.0, n_prev=n_active, soc=state.soc)
         

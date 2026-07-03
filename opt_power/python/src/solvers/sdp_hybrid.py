@@ -3,14 +3,20 @@ import numpy as np
 from numba import njit
 from typing import Tuple
 from src.config import SimConfig
-from src.utils.math_utils import linear_interp_1d, get_c_min_kwh
+from src.utils.math_utils import (
+    linear_interp_1d, 
+    get_c_min_kwh, 
+    calc_cost_operational, 
+    calc_cost_switching, 
+    calc_cost_battery
+)
 
 @njit(cache=True)
 def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
                           pb_vals: np.ndarray, transition_matrix: np.ndarray, Ts: float, 
                           p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                           tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
-                          C_bat: float, C_rep: float, E_life: float, 
+                          Q_bat: float, C_rep: float, E_life: float, 
                           soc_min: float, soc_max: float, 
                           nT: int, apply_terminal_n_cost: bool,
                           soc_target: float, apply_terminal_soc_cost: bool):
@@ -28,8 +34,6 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
     policy_n = np.zeros((T, p_size, n_size, soc_size), dtype=np.int32)
     policy_pbatt = np.zeros((T, p_size, n_size, soc_size), dtype=np.float64)
     
-    k_s = k_fc / S_max
-    
     # 1. Precalculate optimal charging cost for the boundary condition
     c_min_kwh = get_c_min_kwh(p_max, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2)
 
@@ -40,7 +44,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
             
             term_n_cost = 0.0
             if apply_terminal_n_cost:
-                term_n_cost = k_s * abs(n_val - nT)
+                term_n_cost = calc_cost_switching(nT, n_val, k_fc, S_max)
                 
             for k in range(soc_size):
                 soc_val = soc_vals[k]
@@ -48,7 +52,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                 term_soc_cost = 0.0
                 if apply_terminal_soc_cost:
                     # Positive cost for deficit, Negative cost (reward) for surplus
-                    delta_e_kwh = (soc_target - soc_val) * C_bat
+                    delta_e_kwh = (soc_target - soc_val) * Q_bat
                     term_soc_cost = delta_e_kwh * c_min_kwh
                     
                 V[T, i, j, k] = term_n_cost + term_soc_cost
@@ -74,8 +78,6 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
             p_val = p_vals[i]
             for j in range(n_size):
                 n_val = n_vals[j]
-                if n_val <= 0:
-                    continue
                 for k in range(soc_size):
                     soc_val = soc_vals[k]
                     
@@ -86,14 +88,12 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                     # --- ACTION SEARCH ---
                     for a_idx in range(n_size):
                         n_next = n_vals[a_idx]
-                        if n_next <= 0:
-                            continue
-                            
+    
                         for pb_idx in range(pbatt_size):
                             pbatt = pb_vals[pb_idx]
                             
                             # 1. State Kinematics (Project SoC)
-                            soc_next = soc_val - (pbatt * (Ts / 3600.0)) / C_bat
+                            soc_next = soc_val - (pbatt * (Ts / 3600.0)) / Q_bat
                             
                             # 2. Hardware / Physical Limit Filtering
                             if soc_next < soc_min or soc_next > soc_max:
@@ -103,24 +103,22 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                             if p_fc < 0:
                                 continue # Fuel cell cannot absorb reverse current
                                 
-                            p_module = p_fc / n_next
-                            if p_module > p_max:
+                            # Hardware Limits Filtering
+                            if n_next > 0 and (p_fc / n_next) > p_max:
                                 continue # Hardware overload
+                            if n_next == 0 and p_fc > 0:
+                                continue # Can't draw power if all modules are off
                                 
                             # 3. Instantaneous Cost Calculations
-                            m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
-                            d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
-                            c_o_rate = (k_h2 * m_dot_h2 / 1000.0) + (k_fc * d_fc)
-                            
-                            C_o = n_next * c_o_rate * Ts
-                            C_s = k_s * abs(n_next - n_val)
-                            C_bat_cost = C_rep * (abs(pbatt) * (Ts / 3600.0)) / E_life
+                            C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+                            C_s = calc_cost_switching(n_next, n_val, k_fc, S_max)
+                            C_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
                             
                             # 4. Interpolate Expected Future Cost (1D over SoC grid)
                             expected_vals_array = exp_future_cache[i, a_idx, :]
                             exp_future = linear_interp_1d(soc_vals, expected_vals_array, soc_next)
                             
-                            total_cost = C_o + C_s + C_bat_cost + exp_future
+                            total_cost = C_o + C_s + C_bat + exp_future
                             
                             if total_cost < best_cost:
                                 best_cost = total_cost
@@ -164,7 +162,7 @@ class HybridSDPSolver:
             a0=float(self.config.a0),
             a1=float(self.config.a1),
             a2=float(self.config.a2),
-            C_bat=float(self.config.C_bat),
+            Q_bat=float(self.config.Q_bat),
             C_rep=float(self.config.C_rep),
             E_life=float(self.config.E_life),
             soc_min=float(self.config.soc_min),
