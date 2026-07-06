@@ -70,7 +70,6 @@ class SimConfig:
     N_pb: int = 61        # Grid resolution for P_batt dimension (P_batt grid)
     N_pfc: int = 21                    # Grid resolution for previous P_fc dimension
 
-    self.use_smart_grid = kwargs.get('use_smart_grid', False)
 
     # =========================================================================
     # 6. DIRECTORY & PATH MANAGEMENT
