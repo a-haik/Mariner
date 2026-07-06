@@ -66,9 +66,11 @@ class SimConfig:
 
     N_Pd: int = 8         # Number of discrete load levels (Power demand Grid)
     N_n: int = 16          # Number of fuel cell modules on board
-    N_soc: int = 31       # Grid resolution for SoC dimension (SoC Grid)
-    N_pb: int = 31        # Grid resolution for P_batt dimension (P_batt grid)
-    N_pfc: int = 13                    # Grid resolution for previous P_fc dimension
+    N_soc: int = 61       # Grid resolution for SoC dimension (SoC Grid)
+    N_pb: int = 61        # Grid resolution for P_batt dimension (P_batt grid)
+    N_pfc: int = 21                    # Grid resolution for previous P_fc dimension
+
+    self.use_smart_grid = kwargs.get('use_smart_grid', False)
 
     # =========================================================================
     # 6. DIRECTORY & PATH MANAGEMENT
