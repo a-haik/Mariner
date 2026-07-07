@@ -78,7 +78,30 @@ class VoyageBenchmarker:
             
             # Start Markov Timer
             start_t = time.perf_counter()
-            mc_model = fit_dtmc(ds_train['Pd'], self.config.N_Pd, self.config.alpha_mc)
+            
+            if getattr(self.config, 'use_smart_grid', False):
+                dP = self.config.dP
+                max_fc_power = self.config.N_n * self.config.p_max
+                
+                # 1. Force the levels to be [dP, 2dP, 3dP...]
+                # Adding dP/2.0 to the stop parameter prevents np.arange from cutting off the final node
+                smart_levels = np.arange(dP, max_fc_power + (dP / 2.0), dP)
+                
+                # 2. Derive edges exactly halfway between levels [1.5dP, 2.5dP, 3.5dP...]
+                smart_edges = smart_levels[:-1] + (dP / 2.0)
+                
+                # 3. Add absolute lower (-0.001) and safe upper boundaries
+                max_observed = ds_train['Pd'].max()
+                safe_upper_bound = max(max_observed + 1.0, smart_levels[-1] + dP)
+                smart_edges = np.concatenate(([-1e-3], smart_edges, [safe_upper_bound]))
+                
+                # 4. Pass BOTH arrays to completely lock the mathematical lattice
+                mc_model = fit_dtmc(ds_train['Pd'], len(smart_levels), self.config.alpha_mc, 
+                                    manual_edges=smart_edges, manual_levels=smart_levels)
+                
+            else:
+                mc_model = fit_dtmc(ds_train['Pd'], self.config.N_pd, self.config.alpha_mc)
+                
             mc_time = time.perf_counter() - start_t
             
             mc_model['Delta'] = self.config.Ts  

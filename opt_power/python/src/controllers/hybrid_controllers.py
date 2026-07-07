@@ -10,7 +10,8 @@ from src.utils.math_utils import (
     linear_interp_1d,
     calc_cost_operational,
     calc_cost_switching,
-    calc_cost_battery
+    calc_cost_battery,
+    get_exact_index_1d
 )
 
 class HybridFCLockedControl(ControlLaw):
@@ -54,13 +55,14 @@ class HybridPolicyControl(ControlLaw):
     Highlights the dangers of interpolating 'bang-bang' optimal edges.
     """
     def __init__(self, p_grid: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray, 
-                 policy_n: np.ndarray, policy_pbatt: np.ndarray):
+                 policy_n: np.ndarray, policy_pbatt: np.ndarray, is_macro: bool = False):
         self.p_grid = p_grid
         self.n_vals = n_vals
         self.soc_vals = soc_vals
         self.policy_n = policy_n
         self.policy_pbatt = policy_pbatt
         self.current_step = 0
+        self.is_macro = is_macro
 
     def get_action(self, state: State) -> Action:
         t_idx = min(self.current_step, len(self.policy_n) - 1)
@@ -73,10 +75,12 @@ class HybridPolicyControl(ControlLaw):
         best_n_idx = self.policy_n[t_idx, idx_p, idx_n, idx_soc]
         n_opt = int(self.n_vals[best_n_idx])
         
-        # 2D Interpolation over continuous P_d and SoC
-        # We slice the matrix at the current time and discrete module count
-        slice_2d = self.policy_pbatt[t_idx, :, idx_n, :] 
-        p_batt_opt = bilinear_interp(self.p_grid, self.soc_vals, slice_2d, state.P_d, state.soc)
+        use_sg = getattr(self.config, 'use_smart_grid', False)
+        if self.is_macro and use_sg:
+            p_batt_opt = float(self.policy_pbatt[t_idx, idx_p, idx_n, idx_soc])
+        else:
+            slice_2d = self.policy_pbatt[t_idx, :, idx_n, :] 
+            p_batt_opt = bilinear_interp(self.p_grid, self.soc_vals, slice_2d, state.P_d, state.soc)
         
         p_fc_locked = state.P_d - p_batt_opt
         
@@ -89,7 +93,8 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
                           tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
                           Q_bat: float, C_rep: float, E_life: float, soc_min: float, soc_max: float,
                           pb_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
-                          transition_row: np.ndarray, V_next: np.ndarray):
+                          transition_row: np.ndarray, V_next: np.ndarray,
+                          use_exact: bool, dSoC: float):
     """JIT Engine evaluating true continuous cost + interpolated expected future cost."""
     
     n_size = len(n_vals)
@@ -113,19 +118,20 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
     for a_idx in range(n_size):
         n_next = n_vals[a_idx]
         for pbatt in pb_vals:
+
+            epsilon = 1e-5
+
             # Kinematics
             soc_next = soc_real - (pbatt * (Ts / 3600.0)) / Q_bat
-            if soc_next < soc_min or soc_next > soc_max:
-                continue
 
             p_fc = P_d_real - pbatt
-            if p_fc < 0:
+            
+            # Constraints
+            if p_fc< -epsilon:
                 continue
-                
-            # Hardware Limits Filtering (Prevents Division by Zero when n=0)
-            if n_next > 0 and (p_fc / n_next) > p_max:
+            if n_next > 0 and (p_fc / n_next) > p_max + epsilon:
                 continue
-            if n_next == 0 and p_fc > 0:
+            if n_next == 0 and p_fc > epsilon:
                 continue
 
             # Centralized Cost Engine
@@ -133,8 +139,11 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
             C_s = calc_cost_switching(n_next, n_prev, k_fc, S_max)
             C_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
 
-            # 1D Interpolation over the pre-calculated expectation array
-            exp_future = linear_interp_1d(soc_vals, exp_v[a_idx, :], soc_next)
+            if use_exact:
+                s_idx = get_exact_index_1d(soc_next, soc_min, dSoC, soc_size - 1)
+                exp_future = exp_v[a_idx, s_idx]
+            else:
+                exp_future = linear_interp_1d(soc_vals, exp_v[a_idx, :], soc_next)
 
             total_cost = C_o + C_s + C_bat + exp_future
             if total_cost < best_cost:
@@ -150,39 +159,51 @@ class HybridValueControl(ControlLaw):
     exact continuous state (P_d, SoC), using the Value Matrix only for future expectations.
     """
     def __init__(self, config: SimConfig, p_grid: np.ndarray, transition_matrix: np.ndarray, 
-                 V_matrix: np.ndarray):
+                 V_matrix: np.ndarray, is_macro: bool = False):
         self.config = config
         self.p_grid = p_grid
         self.transition_matrix = transition_matrix
         self.V = V_matrix
         self.current_step = 0
+        self.is_macro = is_macro
 
     def get_action(self, state: State) -> Action:
         t_idx = min(self.current_step, len(self.V) - 1)
         
-        # If we are at the very end of the horizon, V_next doesn't exist. 
-        # Fallback to nearest policy or just evaluate instantaneous cost (we use instantaneous only here)
         if t_idx >= len(self.V) - 1:
             V_next = np.zeros((len(self.p_grid), len(self.config.n_vals), len(self.config.soc_vals)))
         else:
             V_next = self.V[t_idx + 1]
 
-        # Get the transition probabilities for the nearest discrete demand state
-        idx_p = nearest_index_1d(self.p_grid, state.P_d)
+        if self.is_macro:
+            P_d_eval = self.p_grid[nearest_index_1d(self.p_grid, state.P_d)]
+            n_eval = int(self.config.n_vals[nearest_index_1d(self.config.n_vals, float(state.n_prev))])
+            soc_eval = self.config.soc_vals[nearest_index_1d(self.config.soc_vals, state.soc)]
+        else:
+            P_d_eval = state.P_d
+            n_eval = state.n_prev
+            soc_eval = state.soc
+
+        idx_p = nearest_index_1d(self.p_grid, P_d_eval)
         transition_row = self.transition_matrix[idx_p, :]
+        
+        use_sg = getattr(self.config, 'use_smart_grid', False)
+        use_exact = use_sg and self.is_macro
+        dP = getattr(self.config, 'dP', 140.0)
+        dSoC = (dP * float(self.config.Ts)) / (float(self.config.Q_bat) * 3600.0) if use_sg else 0.0
 
         best_n, best_pbatt = _run_1_step_lookahead(
-            P_d_real=state.P_d, soc_real=state.soc, n_prev=state.n_prev, Ts=float(self.config.Ts),
+            P_d_real=P_d_eval, soc_real=soc_eval, n_prev=n_eval, Ts=float(self.config.Ts),
             p_max=float(self.config.p_max), p_nom=float(self.config.p_nom), k_fc=float(self.config.k_fc),
             k_h2=float(self.config.k_h2), S_max=float(self.config.S_max), tau_fc=float(self.config.tau_fc),
             alpha_fc=float(self.config.alpha_fc), a0=float(self.config.a0), a1=float(self.config.a1),
             a2=float(self.config.a2), Q_bat=float(self.config.Q_bat), C_rep=float(self.config.C_rep),
             E_life=float(self.config.E_life), soc_min=float(self.config.soc_min), soc_max=float(self.config.soc_max),
             pb_vals=self.config.pb_vals, n_vals=self.config.n_vals, soc_vals=self.config.soc_vals,
-            transition_row=transition_row, V_next=V_next
+            transition_row=transition_row, V_next=V_next, use_exact=use_exact, dSoC=dSoC
         )
 
-        p_fc_locked = state.P_d - best_pbatt
+        p_fc_locked = P_d_eval - best_pbatt if self.is_macro else state.P_d - best_pbatt
         
         self.current_step += 1
         return Action(n_modules=int(best_n), p_batt=best_pbatt, p_fc=p_fc_locked)

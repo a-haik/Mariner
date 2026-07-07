@@ -8,7 +8,8 @@ from src.utils.math_utils import (
     get_c_min_kwh, 
     calc_cost_operational, 
     calc_cost_switching, 
-    calc_cost_battery
+    calc_cost_battery,
+    get_exact_index_1d
 )
 
 @njit(cache=True)
@@ -19,7 +20,8 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                           Q_bat: float, C_rep: float, E_life: float, 
                           soc_min: float, soc_max: float, 
                           nT: int, apply_terminal_n_cost: bool,
-                          soc_target: float, apply_terminal_soc_cost: bool):
+                          soc_target: float, apply_terminal_soc_cost: bool,
+                          use_smart_grid: bool, dSoC: float):
     """
     JIT-compiled backward induction routine for the 4D Hybrid System.
     Updated with true T+1 terminal boundary conditions.
@@ -28,6 +30,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
     n_size = len(n_vals)
     soc_size = len(soc_vals)
     pbatt_size = len(pb_vals)
+    
     
     # EXPAND V matrix to size T+1. Policies stay T.
     V = np.full((T + 1, p_size, n_size, soc_size), np.inf, dtype=np.float64)
@@ -38,16 +41,16 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
     c_min_kwh = get_c_min_kwh(p_max, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2)
 
     # 2. NEW Terminal Boundary Condition (t = T)
-    for i in range(p_size):
-        for j in range(n_size):
-            n_val = n_vals[j]
+    for i_idx in range(p_size):
+        for j_idx in range(n_size):
+            n_val = n_vals[j_idx]
             
             term_n_cost = 0.0
             if apply_terminal_n_cost:
                 term_n_cost = calc_cost_switching(nT, n_val, k_fc, S_max)
                 
-            for k in range(soc_size):
-                soc_val = soc_vals[k]
+            for k_idx in range(soc_size):
+                soc_val = soc_vals[k_idx]
                 
                 term_soc_cost = 0.0
                 if apply_terminal_soc_cost:
@@ -55,7 +58,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                     delta_e_kwh = (soc_target - soc_val) * Q_bat
                     term_soc_cost = delta_e_kwh * c_min_kwh
                     
-                V[T, i, j, k] = term_n_cost + term_soc_cost
+                V[T, i_idx, j_idx, k_idx] = term_n_cost + term_soc_cost
 
     # Pre-allocated cache for the stochastic expected future costs over Demand
     exp_future_cache = np.zeros((p_size, n_size, soc_size), dtype=np.float64)
@@ -65,21 +68,21 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
         
         # --- EXPECTATION TRANSPOSITION ---
         # Calculate Expected Value over the stochastic Demand dimension ONCE per timestep
-        for i in range(p_size):
+        for i_idx in range(p_size):
             for a_idx in range(n_size):
                 for k_next in range(soc_size):
                     s = 0.0
                     for i_next in range(p_size):
-                        s += transition_matrix[i, i_next] * V[t + 1, i_next, a_idx, k_next]
-                    exp_future_cache[i, a_idx, k_next] = s
+                        s += transition_matrix[i_idx, i_next] * V[t + 1, i_next, a_idx, k_next]
+                    exp_future_cache[i_idx, a_idx, k_next] = s
                     
         # --- STATE SEARCH ---
-        for i in range(p_size):
-            p_val = p_vals[i]
-            for j in range(n_size):
-                n_val = n_vals[j]
-                for k in range(soc_size):
-                    soc_val = soc_vals[k]
+        for i_idx in range(p_size):
+            p_val = p_vals[i_idx]
+            for j_idx in range(n_size):
+                n_val = n_vals[j_idx]
+                for k_idx in range(soc_size):
+                    soc_val = soc_vals[k_idx]
                     
                     best_cost = np.inf
                     best_n_idx = 0  
@@ -114,9 +117,13 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                             C_s = calc_cost_switching(n_next, n_val, k_fc, S_max)
                             C_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
                             
-                            # 4. Interpolate Expected Future Cost (1D over SoC grid)
-                            expected_vals_array = exp_future_cache[i, a_idx, :]
-                            exp_future = linear_interp_1d(soc_vals, expected_vals_array, soc_next)
+                           # 4. Interpolate Expected Future Cost (1D over SoC grid)
+                            if use_smart_grid:
+                                soc_idx = get_exact_index_1d(soc_next, soc_min, dSoC, soc_size - 1)
+                                exp_future = exp_future_cache[i_idx, a_idx, soc_idx]
+                            else:
+                                expected_vals_array = exp_future_cache[i_idx, a_idx, :]
+                                exp_future = linear_interp_1d(soc_vals, expected_vals_array, soc_next)
                             
                             total_cost = C_o + C_s + C_bat + exp_future
                             
@@ -125,9 +132,9 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                                 best_n_idx = a_idx
                                 best_pbatt = pbatt
 
-                    V[t, i, j, k] = best_cost
-                    policy_n[t, i, j, k] = best_n_idx
-                    policy_pbatt[t, i, j, k] = best_pbatt
+                    V[t, i_idx, j_idx, k_idx] = best_cost
+                    policy_n[t, i_idx, j_idx, k_idx] = best_n_idx
+                    policy_pbatt[t, i_idx, j_idx, k_idx] = best_pbatt
                     
     return policy_n, policy_pbatt, V
 
@@ -144,6 +151,7 @@ class HybridSDPSolver:
             policy_pbatt: (T, P_size, n_size, soc_size) array of optimal battery power [kW].
             V: (T, P_size, n_size, soc_size) array of expected cumulative costs.
         """
+        dSoC = (self.config.dP * self.config.Ts) / (self.config.Q_bat * 3600.0) if bool(self.config.use_smart_grid) else 0.0
         return _solve_hybrid_bellman(
             T=horizon_length,
             p_vals=self.mc_model['levels'],
@@ -170,5 +178,7 @@ class HybridSDPSolver:
             nT=int(self.config.nT),                                   
             apply_terminal_n_cost=bool(self.config.apply_terminal_n_cost),
             soc_target=float(self.config.soc_target),
-            apply_terminal_soc_cost=bool(self.config.apply_terminal_soc_cost)
+            apply_terminal_soc_cost=bool(self.config.apply_terminal_soc_cost),
+            use_smart_grid=bool(self.config.use_smart_grid),
+            dSoC=float(dSoC)
         )

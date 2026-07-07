@@ -59,7 +59,8 @@ def build_approach(controller_cls, plant_cls=HybridPlant, solver_cls=None, is_ma
             'V': V,
             'horizon_length': horizon,
             'horizon': horizon,
-            'raw_solution': raw_solution 
+            'raw_solution': raw_solution,
+            'is_macro': is_macro 
         }
         
         context_pool.update(kwargs)

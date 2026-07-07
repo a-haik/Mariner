@@ -7,7 +7,8 @@ from src.utils.math_utils import (
     calc_cost_operational, 
     calc_cost_switching, 
     calc_cost_transient,
-    linear_interp_1d
+    linear_interp_1d,
+    get_exact_index_1d
 )
 
 @njit(cache=True)
@@ -15,7 +16,8 @@ def _solve_augmented_baseline_bellman(T: int, p_vals: np.ndarray, n_vals: np.nda
                                       transition_matrix: np.ndarray, Ts: float, p_max: float, p_nom: float, 
                                       k_fc: float, k_h2: float, S_max: float, tau_fc: float, alpha_fc: float, 
                                       a0: float, a1: float, a2: float, lambda_trans: float, 
-                                      nT: int, apply_terminal_n_cost: bool):
+                                      nT: int, apply_terminal_n_cost: bool,
+                                      use_smart_grid: bool, dP: float):
     """
     JIT-compiled backward induction routine for the 3D FC-Only System.
     State space: [Demand, Previous Modules, Previous FC Power]
@@ -29,15 +31,15 @@ def _solve_augmented_baseline_bellman(T: int, p_vals: np.ndarray, n_vals: np.nda
     policy_n = np.zeros((T, p_size, n_size, pfc_size), dtype=np.int32)
     
     # 1. Terminal Boundary Condition (t = T)
-    for i in range(p_size):
-        for j in range(n_size):
-            n_val = n_vals[j]
+    for i_idx in range(p_size):
+        for j_idx in range(n_size):
+            n_val = n_vals[j_idx]
             term_cost = 0.0
             if apply_terminal_n_cost:
                 term_cost = calc_cost_switching(nT, n_val, k_fc, S_max)
                 
-            for l in range(pfc_size):
-                V[T, i, j, l] = term_cost
+            for l_idx in range(pfc_size):
+                V[T, i_idx, j_idx, l_idx] = term_cost
 
     # Pre-allocate cache for stochastic expected future costs: [p_d, n_next, pfc_next]
     exp_future_cache = np.zeros((p_size, n_size, pfc_size), dtype=np.float64)
@@ -46,21 +48,21 @@ def _solve_augmented_baseline_bellman(T: int, p_vals: np.ndarray, n_vals: np.nda
     for t in range(T - 1, -1, -1):
         
         # --- EXPECTATION TRANSPOSITION ---
-        for i in range(p_size):
+        for i_idx in range(p_size):
             for a_idx in range(n_size):
                 for l_next in range(pfc_size):
                     s = 0.0
                     for i_next in range(p_size):
-                        s += transition_matrix[i, i_next] * V[t + 1, i_next, a_idx, l_next]
-                    exp_future_cache[i, a_idx, l_next] = s
+                        s += transition_matrix[i_idx, i_next] * V[t + 1, i_next, a_idx, l_next]
+                    exp_future_cache[i_idx, a_idx, l_next] = s
                     
         # --- STATE SEARCH ---
-        for i in range(p_size):
-            p_val = p_vals[i]
-            for j in range(n_size):
-                n_prev = n_vals[j]
-                for l in range(pfc_size):
-                    pfc_prev = pfc_vals[l]
+        for i_idx in range(p_size):
+            p_val = p_vals[i_idx]
+            for j_idx in range(n_size):
+                n_prev = n_vals[j_idx]
+                for l_idx in range(pfc_size):
+                    pfc_prev = pfc_vals[l_idx]
                     
                     best_cost = np.inf
                     best_n_idx = 0  
@@ -84,8 +86,12 @@ def _solve_augmented_baseline_bellman(T: int, p_vals: np.ndarray, n_vals: np.nda
                         c_trans = calc_cost_transient(n_curr, n_prev, p_fc_curr, pfc_prev, lambda_trans)
                         
                         # 1D Interpolation over P_fc expected grid
-                        expected_vals_array = exp_future_cache[i, a_idx, :]
-                        exp_future = linear_interp_1d(pfc_vals, expected_vals_array, p_fc_curr)
+                        if use_smart_grid:
+                            pfc_idx = get_exact_index_1d(p_fc_curr, 0.0, dP, pfc_size - 1)
+                            exp_future = exp_future_cache[i_idx, a_idx, pfc_idx]
+                        else:
+                            expected_vals_array = exp_future_cache[i_idx, a_idx, :]
+                            exp_future = linear_interp_1d(pfc_vals, expected_vals_array, p_fc_curr)
                         
                         total_cost = c_o + c_s + c_trans + exp_future
                         
@@ -93,8 +99,8 @@ def _solve_augmented_baseline_bellman(T: int, p_vals: np.ndarray, n_vals: np.nda
                             best_cost = total_cost
                             best_n_idx = a_idx
 
-                    V[t, i, j, l] = best_cost
-                    policy_n[t, i, j, l] = best_n_idx
+                    V[t, i_idx, j_idx, l_idx] = best_cost
+                    policy_n[t, i_idx, j_idx, l_idx] = best_n_idx
                         
     return policy_n, V
 
@@ -125,5 +131,7 @@ class AugmentedBaselineSDPSolver:
             a2=float(self.config.a2),
             lambda_trans=float(self.config.lambda_trans),
             nT=int(self.config.nT),                                   
-            apply_terminal_n_cost=bool(self.config.apply_terminal_n_cost)
+            apply_terminal_n_cost=bool(self.config.apply_terminal_n_cost),
+            use_smart_grid=bool(self.config.use_smart_grid),
+            dP=float(self.config.dP)
         )

@@ -70,11 +70,14 @@ class SimConfig:
     N_pb: int = 61        # Grid resolution for P_batt dimension (P_batt grid)
     N_pfc: int = 21                    # Grid resolution for previous P_fc dimension
 
+    use_smart_grid: bool = True
+    dP: float = 400.0
+
 
     # =========================================================================
     # 6. DIRECTORY & PATH MANAGEMENT
     # =========================================================================
-    data_dir: str = "../data/"
+    data_dir: str = "../data/raw/"
     vault_dir: str = "../data/vault/"
 
     # Derived fields (populated automatically in __post_init__)
@@ -87,7 +90,6 @@ class SimConfig:
         # --- PATH RESOLUTION ---
         # Anchor the base directory to the 'python/' folder (one level up from src/)
         python_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        
         abs_data_dir = os.path.abspath(os.path.join(python_dir, self.data_dir))
         abs_vault_dir = os.path.abspath(os.path.join(python_dir, self.vault_dir))
         
@@ -98,19 +100,7 @@ class SimConfig:
         # Ensure the vault directory actually exists before anything tries to write to it
         os.makedirs(abs_vault_dir, exist_ok=True)
 
-        # --- DERIVED HYBRID CONSTANTS ---
-        # 1D discrete array for the module count dimension
-        object.__setattr__(self, 'n_vals', np.arange(0, self.N_n+1, dtype=np.int32))
-
-        # 1D discrete array for the State of Charge dimension
-        object.__setattr__(self, 'soc_vals', np.linspace(self.soc_min, self.soc_max, self.N_soc))
-
-        # 1D discrete array for the State of Charge dimension
-        object.__setattr__(self, 'pb_vals', np.linspace(self.pb_min, self.pb_max, self.N_pb))
-
-        # 1D discrete array for the previous Fuel Cell power dimension
-        object.__setattr__(self, 'pfc_vals', np.linspace(0.0, self.N_n * self.p_max, self.N_pfc))
-
+        # --- DERIVED PHYSICAL CONSTANTS ---
         # Total fuel cell stacks replacement cost [€]
         object.__setattr__(self, 'k_fc', self.c_fc * self.p_max)
 
@@ -122,6 +112,55 @@ class SimConfig:
 
         # Financial penalty per kW of fuel cell power variation
         object.__setattr__(self, 'lambda_trans', self.delta_vlc * self.c_fc / self.v_drop_max)
+
+        # --- GRID GENERATION ---
+        # 1D discrete array for the module count dimension
+        object.__setattr__(self, 'n_vals', np.arange(0, self.N_n+1, dtype=np.int32))
+
+        # Absolute maximum power the system expects to handle
+        max_fc_power = self.N_n * self.p_max
+
+        if self.use_smart_grid:
+            # 1. Congruent Battery Power Grid
+            pb_grid = np.arange(self.pb_min, self.pb_max + self.dP, self.dP)
+            object.__setattr__(self, 'pb_vals', pb_grid)
+            object.__setattr__(self, 'N_pb', len(pb_grid))
+            
+            # 2. Congruent FC Power Grid
+            pfc_grid = np.arange(0.0, max_fc_power + self.dP, self.dP)
+            object.__setattr__(self, 'pfc_vals', pfc_grid)
+            object.__setattr__(self, 'N_pfc', len(pfc_grid))
+            
+            # 3. Congruent SoC Grid rigidly derived from dP and Ts
+            dSoC = (self.dP * self.Ts) / (self.Q_bat * 3600.0)
+            soc_grid = np.arange(self.soc_min, self.soc_max + (dSoC / 2.0), dSoC) # dSoC/2 prevents float cutoff
+            object.__setattr__(self, 'soc_vals', soc_grid)
+            object.__setattr__(self, 'N_soc', len(soc_grid))
+
+            # 4. Snap Initial & Target SOC to the lattice
+            idx_init = int(np.round((self.soc_initial - self.soc_min) / dSoC))
+            object.__setattr__(self, 'soc_initial', float(soc_grid[idx_init]))
+            
+            if hasattr(self, 'soc_target'):
+                idx_tgt = int(np.round((self.soc_target - self.soc_min) / dSoC))
+                object.__setattr__(self, 'soc_target', float(soc_grid[idx_tgt]))
+            
+            # Estimate demand size based on the ceiling
+            N_Pd_est = int(np.ceil(max_fc_power / self.dP))
+            
+        else:
+            # Legacy Manual Grids
+            object.__setattr__(self, 'soc_vals', np.linspace(self.soc_min, self.soc_max, self.N_soc))
+            object.__setattr__(self, 'pb_vals', np.linspace(self.pb_min, self.pb_max, self.N_pb))
+            object.__setattr__(self, 'pfc_vals', np.linspace(0.0, max_fc_power, self.N_pfc))
+            
+            N_Pd_est = self.N_Pd
+            
+            
+        # Fire the diagnostic tracker
+        self._print_complexity_diagnostics(N_Pd_est)
+
+        # --- SANITY CHECKS ---
 
         if self.p_max <= 0 or self.p_nom <= 0:
             raise ValueError("Power limits p_max and p_nom must be strictly positive.")
@@ -147,6 +186,36 @@ class SimConfig:
             
         if self.pb_max <= 0 or self.pb_min >= 0:
             raise ValueError("Battery discharge limit must be > 0, and charge limit must be < 0.")
+        
+
+    def _print_complexity_diagnostics(self, N_Pd_est):
+        """Prints the Big-O complexity for the Augmented Hybrid solver upon initialization."""
+        N_n_len = len(self.n_vals)
+        
+        # O(S) = N_d * N_n * N_soc * N_pfc
+        S_nodes = N_Pd_est * N_n_len * self.N_soc * self.N_pfc
+        
+        # O(A) = N_n * N_bat
+        A_nodes = N_n_len * self.N_pb
+        
+        # O(Comp) = T * |S| * (|N_d| + |A|)
+        transitions = self.Ts * S_nodes * (N_Pd_est + A_nodes)
+        
+        # Est memory: 4D Value (float64=8), Policy N (int32=4), Policy Pbatt (float64=8) per time step
+        bytes_per_state = 20
+        memory_mb = ((self.Ts + 1) * S_nodes * bytes_per_state) / (1024 * 1024)
+        
+        print("\n" + "="*55)
+        print(f"⚙️  EMS Configuration Loaded | Smart Grid: {'ON' if self.use_smart_grid else 'OFF'}")
+        print("="*55)
+        if self.use_smart_grid:
+            print(f" -> dP Step Size       : {self.dP} kW")
+        print(f" -> Grid Dimensions    : N_d≈{N_Pd_est}, N_n={N_n_len}, N_soc={self.N_soc}, N_fc={self.N_pfc}, N_bat={self.N_pb}")
+        print(f" -> Augmented Space |S|: {S_nodes:,} states")
+        print(f" -> Action Space |A|   : {A_nodes:,} actions")
+        print(f" -> Est. Big-O Comput. : O({transitions:,}) operations")
+        print(f" -> Est. RAM Footprint : ~{memory_mb:.2f} MB")
+        print("="*55 + "\n")
         
         
 

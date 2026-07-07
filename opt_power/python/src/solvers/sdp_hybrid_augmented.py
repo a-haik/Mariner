@@ -8,7 +8,8 @@ from src.utils.math_utils import (
     calc_cost_battery, 
     calc_cost_transient,
     bilinear_interp_2d, 
-    get_c_min_kwh
+    get_c_min_kwh,
+    get_exact_index_1d
 )
 
 @njit(cache=True)
@@ -18,7 +19,8 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                              tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
                              Q_bat: float, C_rep: float, E_life: float, lambda_trans: float,
                              soc_min: float, soc_max: float, nT: int, apply_terminal_n_cost: bool,
-                             soc_target: float, apply_terminal_soc_cost: bool):
+                             soc_target: float, apply_terminal_soc_cost: bool,
+                             use_smart_grid: bool, dP: float, dSoC: float):
     """
     JIT-compiled backward induction routine for the 4D Hybrid System.
     State space: [Demand, Previous Modules, Previous SoC, Previous FC Power]
@@ -38,22 +40,22 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
     c_min_kwh = get_c_min_kwh(p_max, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2)
 
     # 1. NEW Terminal Boundary Condition (t = T) - NO Transient Cost
-    for i in range(p_size):
-        for j in range(n_size):
-            n_val = n_vals[j]
+    for i_idx in range(p_size):
+        for j_idx in range(n_size):
+            n_val = n_vals[j_idx]
             term_n_cost = 0.0
             if apply_terminal_n_cost:
                 term_n_cost = calc_cost_switching(nT, n_val, k_fc, S_max) # Delegated to Cost Engine
                 
-            for k in range(soc_size):
-                soc_val = soc_vals[k]
+            for k_idx in range(soc_size):
+                soc_val = soc_vals[k_idx]
                 term_soc_cost = 0.0
                 if apply_terminal_soc_cost:
                     delta_e_kwh = (soc_target - soc_val) * Q_bat
                     term_soc_cost = delta_e_kwh * c_min_kwh
                     
-                for l in range(pfc_size):
-                    V[T, i, j, k, l] = term_n_cost + term_soc_cost
+                for l_idx in range(pfc_size):
+                    V[T, i_idx, j_idx, k_idx, l_idx] = term_n_cost + term_soc_cost
 
     # Pre-allocate cache for stochastic expected future costs: [p_d, n_next, soc_next, pfc_next]
     exp_future_cache = np.zeros((p_size, n_size, soc_size, pfc_size), dtype=np.float64)
@@ -62,24 +64,24 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
     for t in range(T - 1, -1, -1):
         
         # --- EXPECTATION TRANSPOSITION ---
-        for i in range(p_size):
+        for i_idx in range(p_size):
             for a_idx in range(n_size):
                 for k_next in range(soc_size):
                     for l_next in range(pfc_size):
                         s = 0.0
                         for i_next in range(p_size):
-                            s += transition_matrix[i, i_next] * V[t + 1, i_next, a_idx, k_next, l_next]
-                        exp_future_cache[i, a_idx, k_next, l_next] = s
+                            s += transition_matrix[i_idx, i_next] * V[t + 1, i_next, a_idx, k_next, l_next]
+                        exp_future_cache[i_idx, a_idx, k_next, l_next] = s
                     
         # --- STATE SEARCH ---
-        for i in range(p_size):
-            p_val = p_vals[i]
-            for j in range(n_size):
-                n_prev = n_vals[j]
-                for k in range(soc_size):
-                    soc_prev = soc_vals[k]
-                    for l in range(pfc_size):
-                        pfc_prev = pfc_vals[l]
+        for i_idx in range(p_size):
+            p_val = p_vals[i_idx]
+            for j_idx in range(n_size):
+                n_prev = n_vals[j_idx]
+                for k_idx in range(soc_size):
+                    soc_prev = soc_vals[k_idx]
+                    for l_idx in range(pfc_size):
+                        pfc_prev = pfc_vals[l_idx]
                         
                         best_cost = np.inf
                         best_n_idx = 0  
@@ -114,9 +116,14 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                                 c_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
                                 c_trans = calc_cost_transient(n_curr, n_prev, p_fc_curr, pfc_prev, lambda_trans)
                                 
-                                # 4. Interpolate Expected Future Cost (2D over SoC and P_fc grids)
-                                z_mat = exp_future_cache[i, a_idx, :, :]
-                                exp_future = bilinear_interp_2d(soc_vals, pfc_vals, z_mat, soc_curr, p_fc_curr)
+                                # 4. Expected Future Cost (2D over SoC and P_fc grids)
+                                if use_smart_grid:
+                                    soc_idx = get_exact_index_1d(soc_curr, soc_min, dSoC, soc_size - 1)
+                                    pfc_idx = get_exact_index_1d(p_fc_curr, 0.0, dP, pfc_size - 1)
+                                    exp_future = exp_future_cache[i_idx, a_idx, soc_idx, pfc_idx]
+                                else:
+                                    z_mat = exp_future_cache[i_idx, a_idx, :, :]
+                                    exp_future = bilinear_interp_2d(soc_vals, pfc_vals, z_mat, soc_curr, p_fc_curr)
                                 
                                 total_cost = c_o + c_s + c_bat + c_trans + exp_future
                                 
@@ -125,9 +132,9 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                                     best_n_idx = a_idx
                                     best_pbatt = pbatt
 
-                        V[t, i, j, k, l] = best_cost
-                        policy_n[t, i, j, k, l] = best_n_idx
-                        policy_pbatt[t, i, j, k, l] = best_pbatt
+                        V[t, i_idx, j_idx, k_idx, l_idx] = best_cost
+                        policy_n[t, i_idx, j_idx, k_idx, l_idx] = best_n_idx
+                        policy_pbatt[t, i_idx, j_idx, k_idx, l_idx] = best_pbatt
                         
     return policy_n, policy_pbatt, V
 
@@ -139,13 +146,15 @@ class AugmentedHybridSDPSolver:
         self.mc_model = mc_model
 
     def compute_solution(self, horizon_length: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        # We assume you added pfc_vals to your config!
+        
+        dSoC = (self.config.dP * self.config.Ts) / (self.config.Q_bat * 3600.0) if self.config.use_smart_grid else 0.0
+
         return _solve_augmented_bellman(
             T=horizon_length,
             p_vals=self.mc_model['levels'],
             n_vals=self.config.n_vals,
             soc_vals=self.config.soc_vals,
-            pfc_vals=self.config.pfc_vals,  # <--- NEW
+            pfc_vals=self.config.pfc_vals,
             pb_vals=self.config.pb_vals,
             transition_matrix=self.mc_model['P'],
             Ts=float(self.config.Ts),
@@ -162,11 +171,14 @@ class AugmentedHybridSDPSolver:
             Q_bat=float(self.config.Q_bat),
             C_rep=float(self.config.C_rep),
             E_life=float(self.config.E_life),
-            lambda_trans=float(self.config.lambda_trans), # <--- NEW
+            lambda_trans=float(self.config.lambda_trans),
             soc_min=float(self.config.soc_min),
             soc_max=float(self.config.soc_max),
             nT=int(self.config.nT),                                   
             apply_terminal_n_cost=bool(self.config.apply_terminal_n_cost),
             soc_target=float(self.config.soc_target),
-            apply_terminal_soc_cost=bool(self.config.apply_terminal_soc_cost)
+            apply_terminal_soc_cost=bool(self.config.apply_terminal_soc_cost),
+            use_smart_grid=bool(self.config.use_smart_grid),
+            dP=float(self.config.dP),
+            dSoC=float(dSoC)
         )

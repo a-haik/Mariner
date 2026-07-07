@@ -75,7 +75,8 @@ def load_and_cache_entire_fleet(config: SimConfig) -> dict[int, dict]:
     Falls back gracefully to mock data if specific file frames are missing.
     """
     fleet_cache = {}
-    all_fleet_files = [f"../data/SOV_{day:02d}-Feb-2023.mat" for day in range(1, 15)]
+    dir = config.data_dir
+    all_fleet_files = [f"{dir}/SOV_{day:02d}-Feb-2023.mat" for day in range(1, 15)]
     
     print("Beginning memory staging of all 14 fleet files into RAM...")
     for idx, path in enumerate(all_fleet_files):
@@ -221,10 +222,10 @@ def _fit_dtmc_worker(segments: numba.typed.List, m_states: int, alpha: float, ed
     return P, N, stationary_pi, levels
 
 
-def fit_dtmc(power_samples, m_states: int, alpha: float = 0.5, manual_edges: np.ndarray = None) -> dict:
+def fit_dtmc(power_samples, m_states: int, alpha: float = 0.5, manual_edges: np.ndarray = None, manual_levels: np.ndarray = None) -> dict:
     """
     Public segment-aware interface. 
-    Accepts manual_edges to override automatic quantile binning for discretization studies.
+    Accepts manual_edges and manual_levels to override automatic binning.
     """
     numba_list = numba.typed.List()
     total_len = 0
@@ -252,4 +253,9 @@ def fit_dtmc(power_samples, m_states: int, alpha: float = 0.5, manual_edges: np.
         edges = _make_edges_quantile_numba(all_samples, m_states)
         
     P, N, stationary_pi, levels = _fit_dtmc_worker(numba_list, m_states, alpha, edges)
+    
+    # NEW: Override the midpoints if specific physical grid nodes were requested
+    if manual_levels is not None:
+        levels = np.array(manual_levels, dtype=np.float64)
+        
     return {'P': P, 'N': N, 'pi': stationary_pi, 'edges': edges, 'levels': levels}

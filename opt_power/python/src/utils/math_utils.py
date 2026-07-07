@@ -20,6 +20,26 @@ def nearest_index_1d(grid: np.ndarray, val: float) -> int:
         return idx
     else:
         return idx - 1
+    
+@njit(cache=True)
+def get_exact_index_1d(val: float, grid_min: float, step_size: float, max_idx: int) -> int:
+    """
+    O(1) exact integer index calculation for perfectly uniform smart grids.
+    Bypasses searchsorted by directly computing the algebraic index.
+    Safely clamps to the grid boundaries.
+    """
+    if step_size <= 0.0:
+        return 0
+        
+    # Calculate index and round to handle floating point drift
+    idx = int(np.round((val - grid_min) / step_size))
+    
+    # Clamp to boundaries
+    if idx < 0:
+        return 0
+    if idx > max_idx:
+        return max_idx
+    return idx
 
 @njit(cache=True)
 def linear_interp_1d(grid: np.ndarray, values: np.ndarray, val: float) -> float:

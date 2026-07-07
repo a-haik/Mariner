@@ -10,7 +10,8 @@ from src.utils.math_utils import (
     calc_cost_operational,
     calc_cost_switching,
     calc_cost_battery,
-    calc_cost_transient
+    calc_cost_transient,
+    get_exact_index_1d
 )
 
 class AugmentedFCLockedControl(ControlLaw):
@@ -55,8 +56,10 @@ class AugmentedPolicyControl(ControlLaw):
     Smooths out the discrete policy matrices via 2D Bilinear Interpolation.
     Interpolates over the two continuous variables: SoC and P_fc_prev.
     """
-    def __init__(self, p_grid: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray, 
-                 pfc_vals: np.ndarray, policy_n: np.ndarray, policy_pbatt: np.ndarray):
+    def __init__(self, config: SimConfig, p_grid: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray, 
+                 pfc_vals: np.ndarray, policy_n: np.ndarray, policy_pbatt: np.ndarray, is_macro: bool = False):
+        self.config = config
+        self.is_macro = is_macro
         self.p_grid = p_grid
         self.n_vals = n_vals
         self.soc_vals = soc_vals
@@ -68,22 +71,23 @@ class AugmentedPolicyControl(ControlLaw):
     def get_action(self, state: State) -> Action:
         t_idx = min(self.current_step, len(self.policy_n) - 1)
         
-        # Snap parameters that act as "conditions" (Demand and Previous Modules)
         idx_p = nearest_index_1d(self.p_grid, state.P_d)
         idx_n = nearest_index_1d(self.n_vals, float(state.n_prev))
-        
-        # We must snap the continuous variables just to find the optimal module count 
-        # (since module count is a discrete integer and cannot be interpolated)
         idx_soc = nearest_index_1d(self.soc_vals, state.soc)
         idx_pfc = nearest_index_1d(self.pfc_vals, state.p_fc_prev)
         
         best_n_idx = self.policy_n[t_idx, idx_p, idx_n, idx_soc, idx_pfc]
         n_opt = int(self.n_vals[best_n_idx])
         
-        # 2D Interpolation over continuous SoC and P_fc_prev dimensions
-        # We slice the matrix to lock in the Demand and the n_prev.
-        slice_2d = self.policy_pbatt[t_idx, idx_p, idx_n, :, :] 
-        p_batt_opt = bilinear_interp_2d(self.soc_vals, self.pfc_vals, slice_2d, state.soc, state.p_fc_prev)
+        # --- BYPASS INTERPOLATION IF ON EXACT GRID ---
+        use_sg = getattr(self.config, 'use_smart_grid', False)
+        if self.is_macro and use_sg:
+            # Absolute extraction parity with FCLockedControl
+            p_batt_opt = float(self.policy_pbatt[t_idx, idx_p, idx_n, idx_soc, idx_pfc])
+        else:
+            # Smooth reality mapping for 1Hz data
+            slice_2d = self.policy_pbatt[t_idx, idx_p, idx_n, :, :] 
+            p_batt_opt = bilinear_interp_2d(self.soc_vals, self.pfc_vals, slice_2d, state.soc, state.p_fc_prev)
         
         p_fc_locked = state.P_d - p_batt_opt
         
@@ -98,7 +102,8 @@ def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: in
                                     Q_bat: float, C_rep: float, E_life: float, lambda_trans: float, 
                                     soc_min: float, soc_max: float, pb_vals: np.ndarray, n_vals: np.ndarray, 
                                     soc_vals: np.ndarray, pfc_vals: np.ndarray,
-                                    transition_row: np.ndarray, V_next: np.ndarray):
+                                    transition_row: np.ndarray, V_next: np.ndarray,
+                                    use_exact: bool, dSoC: float, dP: float):
     """JIT Engine evaluating true continuous 4D cost using the Unified Cost Engine."""
     
     n_size = len(n_vals)
@@ -124,19 +129,22 @@ def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: in
     for a_idx in range(n_size):
         n_curr = n_vals[a_idx]
         for pbatt in pb_vals:
+
+            epsilon = 1e-5
+
             # Kinematics
             soc_next = soc_real - (pbatt * (Ts / 3600.0)) / Q_bat
-            if soc_next < soc_min or soc_next > soc_max:
+            if soc_next < soc_min - epsilon or soc_next > soc_max + epsilon:
                 continue
 
             p_fc_curr = P_d_real - pbatt
             
             # Constraints
-            if p_fc_curr < 0:
+            if p_fc_curr < -epsilon:
                 continue
-            if n_curr > 0 and (p_fc_curr / n_curr) > p_max:
+            if n_curr > 0 and (p_fc_curr / n_curr) > p_max + epsilon:
                 continue
-            if n_curr == 0 and p_fc_curr > 0:
+            if n_curr == 0 and p_fc_curr > epsilon:
                 continue
 
             # Centralized Cost Engine
@@ -147,7 +155,13 @@ def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: in
 
             # 2D Interpolation over expected future surface
             z_mat = exp_v[a_idx, :, :]
-            exp_future = bilinear_interp_2d(soc_vals, pfc_vals, z_mat, soc_next, p_fc_curr)
+
+            if use_exact:
+                s_idx = get_exact_index_1d(soc_next, soc_min, dSoC, soc_size - 1)
+                p_idx = get_exact_index_1d(p_fc_curr, 0.0, dP, pfc_size - 1)
+                exp_future = z_mat[s_idx, p_idx]
+            else:
+                exp_future = bilinear_interp_2d(soc_vals, pfc_vals, z_mat, soc_next, p_fc_curr)
 
             total_cost = c_o + c_s + c_bat + c_trans + exp_future
             
@@ -164,12 +178,13 @@ class AugmentedValueControl(ControlLaw):
     exact continuous state, using the Value Matrix only for future expectations.
     """
     def __init__(self, config: SimConfig, p_grid: np.ndarray, transition_matrix: np.ndarray, 
-                 V_matrix: np.ndarray):
+                 V_matrix: np.ndarray, is_macro: bool = False):
         self.config = config
         self.p_grid = p_grid
         self.transition_matrix = transition_matrix
         self.V = V_matrix
         self.current_step = 0
+        self.is_macro = is_macro
 
     def get_action(self, state: State) -> Action:
         t_idx = min(self.current_step, len(self.V) - 1)
@@ -179,11 +194,27 @@ class AugmentedValueControl(ControlLaw):
         else:
             V_next = self.V[t_idx + 1]
 
-        idx_p = nearest_index_1d(self.p_grid, state.P_d)
+        if self.is_macro:
+            P_d_eval = self.p_grid[nearest_index_1d(self.p_grid, state.P_d)]
+            n_eval = int(self.config.n_vals[nearest_index_1d(self.config.n_vals, float(state.n_prev))])
+            soc_eval = self.config.soc_vals[nearest_index_1d(self.config.soc_vals, state.soc)]
+            pfc_eval = self.config.pfc_vals[nearest_index_1d(self.config.pfc_vals, state.p_fc_prev)]
+        else:
+            P_d_eval = state.P_d
+            n_eval = state.n_prev
+            soc_eval = state.soc
+            pfc_eval = state.p_fc_prev
+
+        idx_p = nearest_index_1d(self.p_grid, P_d_eval)
         transition_row = self.transition_matrix[idx_p, :]
 
+        use_sg = getattr(self.config, 'use_smart_grid', False)
+        use_exact = use_sg and self.is_macro
+        dP = getattr(self.config, 'dP', 140.0)
+        dSoC = (dP * float(self.config.Ts)) / (float(self.config.Q_bat) * 3600.0) if use_sg else 0.0
+
         best_n, best_pbatt = _run_augmented_1_step_lookahead(
-            P_d_real=state.P_d, soc_real=state.soc, n_prev=state.n_prev, pfc_prev=state.p_fc_prev, Ts=float(self.config.Ts),
+            P_d_real=P_d_eval, soc_real=soc_eval, n_prev=n_eval, pfc_prev=pfc_eval, Ts=float(self.config.Ts),
             p_max=float(self.config.p_max), p_nom=float(self.config.p_nom), k_fc=float(self.config.k_fc),
             k_h2=float(self.config.k_h2), S_max=float(self.config.S_max), tau_fc=float(self.config.tau_fc),
             alpha_fc=float(self.config.alpha_fc), a0=float(self.config.a0), a1=float(self.config.a1),
@@ -191,10 +222,11 @@ class AugmentedValueControl(ControlLaw):
             E_life=float(self.config.E_life), lambda_trans=float(self.config.lambda_trans),
             soc_min=float(self.config.soc_min), soc_max=float(self.config.soc_max),
             pb_vals=self.config.pb_vals, n_vals=self.config.n_vals, soc_vals=self.config.soc_vals, 
-            pfc_vals=self.config.pfc_vals, transition_row=transition_row, V_next=V_next
+            pfc_vals=self.config.pfc_vals, transition_row=transition_row, V_next=V_next,
+            use_exact=use_exact, dSoC=dSoC, dP=dP
         )
 
-        p_fc_locked = state.P_d - best_pbatt
+        p_fc_locked = P_d_eval - best_pbatt if self.is_macro else state.P_d - best_pbatt
         
         self.current_step += 1
         return Action(n_modules=int(best_n), p_batt=best_pbatt, p_fc=p_fc_locked)
