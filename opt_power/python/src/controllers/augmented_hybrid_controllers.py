@@ -11,7 +11,9 @@ from src.utils.math_utils import (
     calc_cost_switching,
     calc_cost_battery,
     calc_cost_transient,
-    get_exact_index_1d
+    get_exact_index_1d,
+    calculate_continuous_bounds,
+    gss_augmented
 )
 
 class AugmentedFCLockedControl(ControlLaw):
@@ -103,7 +105,7 @@ def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: in
                                     soc_min: float, soc_max: float, pb_vals: np.ndarray, n_vals: np.ndarray, 
                                     soc_vals: np.ndarray, pfc_vals: np.ndarray,
                                     transition_row: np.ndarray, V_next: np.ndarray,
-                                    use_exact: bool, dSoC: float, dP: float):
+                                    use_exact: bool, dSoC: float, dP: float, is_macro: bool):
     """JIT Engine evaluating true continuous 4D cost using the Unified Cost Engine."""
     
     n_size = len(n_vals)
@@ -125,50 +127,69 @@ def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: in
     best_n = n_vals[0]
     best_pbatt = 0.0
 
-    # 2. Grid search over action space using exact continuous physical reality
+    pb_min_config = pb_vals[0]
+    pb_max_config = pb_vals[-1]
+
     for a_idx in range(n_size):
         n_curr = n_vals[a_idx]
-        for pbatt in pb_vals:
+        
+        if is_macro:
+            for pbatt in pb_vals:
 
-            epsilon = 1e-5
+                epsilon = 1e-5
 
-            # Kinematics
-            soc_next = soc_real - (pbatt * (Ts / 3600.0)) / Q_bat
-            if soc_next < soc_min - epsilon or soc_next > soc_max + epsilon:
-                continue
+                # Kinematics
+                soc_next = soc_real - (pbatt * (Ts / 3600.0)) / Q_bat
+                if soc_next < soc_min - epsilon or soc_next > soc_max + epsilon:
+                    continue
 
-            p_fc_curr = P_d_real - pbatt
+                p_fc_curr = P_d_real - pbatt
+                
+                # Constraints
+                if p_fc_curr < -epsilon:
+                    continue
+                if n_curr > 0 and (p_fc_curr / n_curr) > p_max + epsilon:
+                    continue
+                if n_curr == 0 and p_fc_curr > epsilon:
+                    continue
+
+                # Centralized Cost Engine
+                c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+                c_s = calc_cost_switching(n_curr, n_prev, k_fc, S_max)
+                c_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
+                c_trans = calc_cost_transient(n_curr, n_prev, p_fc_curr, pfc_prev, lambda_trans)
+
+                # 2D Interpolation over expected future surface
+                z_mat = exp_v[a_idx, :, :]
+
+                if use_exact:
+                    s_idx = get_exact_index_1d(soc_next, soc_min, dSoC, soc_size - 1)
+                    p_idx = get_exact_index_1d(p_fc_curr, 0.0, dP, pfc_size - 1)
+                    exp_future = z_mat[s_idx, p_idx]
+                else:
+                    exp_future = bilinear_interp_2d(soc_vals, pfc_vals, z_mat, soc_next, p_fc_curr)
+
+                total_cost = c_o + c_s + c_bat + c_trans + exp_future
+                
+                if total_cost < best_cost:
+                    best_cost = total_cost
+                    best_n = n_curr
+                    best_pbatt = pbatt
+
+        else:
+            # CONTINUOUS OPTIMIZER LOGIC
+            pb_min, pb_max = calculate_continuous_bounds(P_d_real, soc_real, n_curr, Ts, p_max, Q_bat, soc_min, soc_max, pb_min_config, pb_max_config)
             
-            # Constraints
-            if p_fc_curr < -epsilon:
+            if pb_min > pb_max + 1e-5:
                 continue
-            if n_curr > 0 and (p_fc_curr / n_curr) > p_max + epsilon:
-                continue
-            if n_curr == 0 and p_fc_curr > epsilon:
-                continue
-
-            # Centralized Cost Engine
-            c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
-            c_s = calc_cost_switching(n_curr, n_prev, k_fc, S_max)
-            c_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
-            c_trans = calc_cost_transient(n_curr, n_prev, p_fc_curr, pfc_prev, lambda_trans)
-
-            # 2D Interpolation over expected future surface
-            z_mat = exp_v[a_idx, :, :]
-
-            if use_exact:
-                s_idx = get_exact_index_1d(soc_next, soc_min, dSoC, soc_size - 1)
-                p_idx = get_exact_index_1d(p_fc_curr, 0.0, dP, pfc_size - 1)
-                exp_future = z_mat[s_idx, p_idx]
-            else:
-                exp_future = bilinear_interp_2d(soc_vals, pfc_vals, z_mat, soc_next, p_fc_curr)
-
-            total_cost = c_o + c_s + c_bat + c_trans + exp_future
-            
+                
+            opt_pb, total_cost = gss_augmented(pb_min, pb_max, 1.0, P_d_real, soc_real, n_curr, n_prev, pfc_prev, Ts, 
+                                               p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, 
+                                               Q_bat, C_rep, E_life, lambda_trans, soc_vals, pfc_vals, exp_v[a_idx, :, :])
             if total_cost < best_cost:
                 best_cost = total_cost
                 best_n = n_curr
-                best_pbatt = pbatt
+                best_pbatt = opt_pb
 
     return best_n, best_pbatt
 
@@ -223,7 +244,7 @@ class AugmentedValueControl(ControlLaw):
             soc_min=float(self.config.soc_min), soc_max=float(self.config.soc_max),
             pb_vals=self.config.pb_vals, n_vals=self.config.n_vals, soc_vals=self.config.soc_vals, 
             pfc_vals=self.config.pfc_vals, transition_row=transition_row, V_next=V_next,
-            use_exact=use_exact, dSoC=dSoC, dP=dP
+            use_exact=use_exact, dSoC=dSoC, dP=dP, is_macro=self.is_macro
         )
 
         p_fc_locked = P_d_eval - best_pbatt if self.is_macro else state.P_d - best_pbatt

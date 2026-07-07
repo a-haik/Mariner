@@ -1,4 +1,4 @@
-# python/src/solvers/hybrid_sdp.py
+# python/src/solvers/sdp_hybrid.py
 import numpy as np
 from numba import njit
 from typing import Tuple
@@ -33,7 +33,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
     
     
     # EXPAND V matrix to size T+1. Policies stay T.
-    V = np.full((T + 1, p_size, n_size, soc_size), np.inf, dtype=np.float64)
+    V = np.full((T + 1, p_size, n_size, soc_size), 0, dtype=np.float64)
     policy_n = np.zeros((T, p_size, n_size, soc_size), dtype=np.int32)
     policy_pbatt = np.zeros((T, p_size, n_size, soc_size), dtype=np.float64)
     
@@ -94,30 +94,39 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
     
                         for pb_idx in range(pbatt_size):
                             pbatt = pb_vals[pb_idx]
+                            p_fc = p_val - pbatt
                             
-                            # 1. State Kinematics (Project SoC)
+                            penalty = 0.0
+                            
+                            # 1. Hardware Limits Filtering (Slack Math & Clamping)
+                            if p_fc < 0:
+                                penalty += abs(p_fc) * 1e6
+                                p_fc = 0.0 # Clamp
+                                
+                            if n_next > 0 and (p_fc / n_next) > p_max:
+                                penalty += ((p_fc / n_next) - p_max) * 1e6
+                                p_fc = n_next * p_max # Clamp
+                                
+                            if n_next == 0 and p_fc > 0:
+                                penalty += p_fc * 1e6
+                                p_fc = 0.0 # Clamp
+                            
+                            # 2. State Kinematics (Project SoC with Slack Math)
                             soc_next = soc_val - (pbatt * (Ts / 3600.0)) / Q_bat
                             
-                            # 2. Hardware / Physical Limit Filtering
-                            if soc_next < soc_min or soc_next > soc_max:
-                                continue 
-                                
-                            p_fc = p_val - pbatt
-                            if p_fc < 0:
-                                continue # Fuel cell cannot absorb reverse current
-                                
-                            # Hardware Limits Filtering
-                            if n_next > 0 and (p_fc / n_next) > p_max:
-                                continue # Hardware overload
-                            if n_next == 0 and p_fc > 0:
-                                continue # Can't draw power if all modules are off
+                            if soc_next < soc_min:
+                                penalty += (soc_min - soc_next) * 1e7
+                                soc_next = soc_min # Clamp
+                            elif soc_next > soc_max:
+                                penalty += (soc_next - soc_max) * 1e7
+                                soc_next = soc_max # Clamp
                                 
                             # 3. Instantaneous Cost Calculations
                             C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
                             C_s = calc_cost_switching(n_next, n_val, k_fc, S_max)
                             C_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
                             
-                           # 4. Interpolate Expected Future Cost (1D over SoC grid)
+                            # 4. Interpolate Expected Future Cost 
                             if use_smart_grid:
                                 soc_idx = get_exact_index_1d(soc_next, soc_min, dSoC, soc_size - 1)
                                 exp_future = exp_future_cache[i_idx, a_idx, soc_idx]
@@ -125,7 +134,8 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                                 expected_vals_array = exp_future_cache[i_idx, a_idx, :]
                                 exp_future = linear_interp_1d(soc_vals, expected_vals_array, soc_next)
                             
-                            total_cost = C_o + C_s + C_bat + exp_future
+                            # Add the proportional slack penalty to the total cost
+                            total_cost = C_o + C_s + C_bat + exp_future + penalty
                             
                             if total_cost < best_cost:
                                 best_cost = total_cost

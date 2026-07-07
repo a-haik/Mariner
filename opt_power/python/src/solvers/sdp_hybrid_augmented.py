@@ -1,3 +1,4 @@
+# python/src/solvers/sdp_hybrid_augmented.py
 import numpy as np
 from numba import njit
 from typing import Tuple
@@ -32,7 +33,7 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
     pbatt_size = len(pb_vals)
     
     # 4D Value Matrix and Policy Matrices
-    V = np.full((T + 1, p_size, n_size, soc_size, pfc_size), np.inf, dtype=np.float64)
+    V = np.full((T + 1, p_size, n_size, soc_size, pfc_size), 0, dtype=np.float64)
     policy_n = np.zeros((T, p_size, n_size, soc_size, pfc_size), dtype=np.int32)
     policy_pbatt = np.zeros((T, p_size, n_size, soc_size, pfc_size), dtype=np.float64)
     
@@ -83,7 +84,7 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                     for l_idx in range(pfc_size):
                         pfc_prev = pfc_vals[l_idx]
                         
-                        best_cost = np.inf
+                        best_cost = 1e6
                         best_n_idx = 0  
                         best_pbatt = 0.0
                         
@@ -95,20 +96,30 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                                 pbatt = pb_vals[pb_idx]
                                 p_fc_curr = p_val - pbatt
                                 
-                                # 1. Hardware Limits Filtering
+                                penalty = 0.0
+                                
+                                # 1. Hardware Limits Filtering (Slack Math & Clamping)
                                 if p_fc_curr < 0:
-                                    continue # Fuel cells can't sink power
+                                    penalty += abs(p_fc_curr) * 1e6
+                                    p_fc_curr = 0.0 # Clamp
                                     
                                 if n_curr > 0 and (p_fc_curr / n_curr) > p_max:
-                                    continue # Module Overload
+                                    penalty += ((p_fc_curr / n_curr) - p_max) * 1e6
+                                    p_fc_curr = n_curr * p_max # Clamp
                                     
                                 if n_curr == 0 and p_fc_curr > 0:
-                                    continue # Can't draw power if all modules are off
+                                    penalty += p_fc_curr * 1e6
+                                    p_fc_curr = 0.0 # Clamp
                                 
-                                # 2. State Kinematics (Project SoC)
+                                # 2. State Kinematics (Project SoC with Slack Math)
                                 soc_curr = soc_prev - (pbatt * (Ts / 3600.0)) / Q_bat
-                                if soc_curr < soc_min or soc_curr > soc_max:
-                                    continue # Battery bounds
+                                
+                                if soc_curr < soc_min:
+                                    penalty += (soc_min - soc_curr) * 1e7
+                                    soc_curr = soc_min # Clamp
+                                elif soc_curr > soc_max:
+                                    penalty += (soc_curr - soc_max) * 1e7
+                                    soc_curr = soc_max # Clamp
                                     
                                 # 3. Centralized Cost Engine Calculations
                                 c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
@@ -116,7 +127,7 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                                 c_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
                                 c_trans = calc_cost_transient(n_curr, n_prev, p_fc_curr, pfc_prev, lambda_trans)
                                 
-                                # 4. Expected Future Cost (2D over SoC and P_fc grids)
+                                # 4. Expected Future Cost 
                                 if use_smart_grid:
                                     soc_idx = get_exact_index_1d(soc_curr, soc_min, dSoC, soc_size - 1)
                                     pfc_idx = get_exact_index_1d(p_fc_curr, 0.0, dP, pfc_size - 1)
@@ -125,7 +136,8 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                                     z_mat = exp_future_cache[i_idx, a_idx, :, :]
                                     exp_future = bilinear_interp_2d(soc_vals, pfc_vals, z_mat, soc_curr, p_fc_curr)
                                 
-                                total_cost = c_o + c_s + c_bat + c_trans + exp_future
+                                # Add the proportional slack penalty to the total cost
+                                total_cost = c_o + c_s + c_bat + c_trans + exp_future + penalty
                                 
                                 if total_cost < best_cost:
                                     best_cost = total_cost

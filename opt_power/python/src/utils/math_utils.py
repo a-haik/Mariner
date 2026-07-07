@@ -151,6 +151,10 @@ def calc_cost_operational(n_active: int, p_fc: float, p_nom: float, tau_fc: floa
                           alpha_fc: float, k_fc: float, k_h2: float, 
                           a0: float, a1: float, a2: float, dt: float) -> float:
     """Calculates continuous H2 consumption and baseline electrochemical degradation."""
+    
+    if p_fc < 1e-5:
+        p_fc = 0.0
+        
     if n_active <= 0:
         return np.inf if p_fc > 0 else 0.0
         
@@ -213,3 +217,149 @@ def get_c_min_kwh(p_max: float, p_nom: float, tau_fc: float, alpha_fc: float,
             min_cost_per_kwh = cost_kwh
             
     return min_cost_per_kwh
+
+@njit(cache=True)
+def calculate_continuous_bounds(P_d_real: float, soc_real: float, n_next: int, Ts: float, 
+                                p_max: float, Q_bat: float, soc_min: float, soc_max: float, 
+                                pb_min_config: float, pb_max_config: float):
+    """Calculates strict physical bounds for continuous P_batt to prevent the optimizer from searching impossible states."""
+    # 1. SoC bounds constraints
+    pb_soc_min = (soc_real - soc_max) * 3600.0 * Q_bat / Ts
+    pb_soc_max = (soc_real - soc_min) * 3600.0 * Q_bat / Ts
+
+    # 2. FC bounds constraints (P_fc = P_d_real - P_batt)
+    pb_fc_max = P_d_real # P_fc >= 0
+    if n_next > 0:
+        pb_fc_min = P_d_real - (n_next * p_max) # P_fc / n_next <= p_max
+    else:
+        pb_fc_min = P_d_real # If modules are off, P_fc MUST be 0
+
+    valid_min = max(pb_min_config, pb_soc_min, pb_fc_min)
+    valid_max = min(pb_max_config, pb_soc_max, pb_fc_max)
+
+    return valid_min, valid_max
+
+# ---------------------------------------------------------
+# STANDARD GSS (For 3D Hybrid Control)
+# ---------------------------------------------------------
+@njit(cache=True)
+def eval_cost_standard(pbatt: float, P_d_real: float, soc_real: float, n_next: int, n_prev: int, Ts: float, 
+                       p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, tau_fc: float, 
+                       alpha_fc: float, a0: float, a1: float, a2: float, Q_bat: float, C_rep: float, 
+                       E_life: float, soc_vals: np.ndarray, exp_v_slice: np.ndarray):
+    soc_next = soc_real - (pbatt * (Ts / 3600.0)) / Q_bat
+    p_fc = P_d_real - pbatt
+    
+    if p_fc < 1e-5:
+        p_fc = 0.0
+
+    C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+    C_s = calc_cost_switching(n_next, n_prev, k_fc, S_max)
+    C_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
+    exp_future = linear_interp_1d(soc_vals, exp_v_slice, soc_next)
+
+    return C_o + C_s + C_bat + exp_future
+
+@njit(cache=True)
+def gss_standard(pb_min: float, pb_max: float, tol: float, P_d_real: float, soc_real: float, n_next: int, n_prev: int, 
+                 Ts: float, p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, tau_fc: float, 
+                 alpha_fc: float, a0: float, a1: float, a2: float, Q_bat: float, C_rep: float, E_life: float, 
+                 soc_vals: np.ndarray, exp_v_slice: np.ndarray):
+    if pb_max - pb_min <= tol:
+        pb_opt = (pb_min + pb_max) / 2.0
+        return pb_opt, eval_cost_standard(pb_opt, P_d_real, soc_real, n_next, n_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, soc_vals, exp_v_slice)
+
+    INVPHI = (np.sqrt(5.0) - 1.0) / 2.0
+    INVPHI2 = (3.0 - np.sqrt(5.0)) / 2.0
+
+    a = pb_min
+    b = pb_max
+    h = b - a
+    c = a + INVPHI2 * h
+    d = a + INVPHI * h
+
+    cost_c = eval_cost_standard(c, P_d_real, soc_real, n_next, n_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, soc_vals, exp_v_slice)
+    cost_d = eval_cost_standard(d, P_d_real, soc_real, n_next, n_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, soc_vals, exp_v_slice)
+
+    while abs(h) > tol:
+        if cost_c < cost_d:
+            b = d
+            d = c
+            cost_d = cost_c
+            h = b - a
+            c = a + INVPHI2 * h
+            cost_c = eval_cost_standard(c, P_d_real, soc_real, n_next, n_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, soc_vals, exp_v_slice)
+        else:
+            a = c
+            c = d
+            cost_c = cost_d
+            h = b - a
+            d = a + INVPHI * h
+            cost_d = eval_cost_standard(d, P_d_real, soc_real, n_next, n_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, soc_vals, exp_v_slice)
+
+    pb_opt = (a + b) / 2.0
+    return pb_opt, eval_cost_standard(pb_opt, P_d_real, soc_real, n_next, n_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, soc_vals, exp_v_slice)
+
+# ---------------------------------------------------------
+# AUGMENTED GSS (For 4D Augmented Control)
+# ---------------------------------------------------------
+@njit(cache=True)
+def eval_cost_augmented(pbatt: float, P_d_real: float, soc_real: float, n_next: int, n_prev: int, pfc_prev: float, Ts: float, 
+                        p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, tau_fc: float, alpha_fc: float, 
+                        a0: float, a1: float, a2: float, Q_bat: float, C_rep: float, E_life: float, lambda_trans: float, 
+                        soc_vals: np.ndarray, pfc_vals: np.ndarray, exp_v_slice: np.ndarray):
+    soc_next = soc_real - (pbatt * (Ts / 3600.0)) / Q_bat
+    p_fc = P_d_real - pbatt
+    
+    if p_fc < 1e-5:
+        p_fc = 0.0
+
+    C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+    C_s = calc_cost_switching(n_next, n_prev, k_fc, S_max)
+    C_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
+    C_trans = calc_cost_transient(n_next, n_prev, p_fc, pfc_prev, lambda_trans)
+    
+    exp_future = bilinear_interp_2d(soc_vals, pfc_vals, exp_v_slice, soc_next, p_fc)
+
+    return C_o + C_s + C_bat + C_trans + exp_future
+
+@njit(cache=True)
+def gss_augmented(pb_min: float, pb_max: float, tol: float, P_d_real: float, soc_real: float, n_next: int, n_prev: int, pfc_prev: float,
+                  Ts: float, p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, tau_fc: float, alpha_fc: float, 
+                  a0: float, a1: float, a2: float, Q_bat: float, C_rep: float, E_life: float, lambda_trans: float, 
+                  soc_vals: np.ndarray, pfc_vals: np.ndarray, exp_v_slice: np.ndarray):
+    
+    if pb_max - pb_min <= tol:
+        pb_opt = (pb_min + pb_max) / 2.0
+        return pb_opt, eval_cost_augmented(pb_opt, P_d_real, soc_real, n_next, n_prev, pfc_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, lambda_trans, soc_vals, pfc_vals, exp_v_slice)
+
+    INVPHI = (np.sqrt(5.0) - 1.0) / 2.0
+    INVPHI2 = (3.0 - np.sqrt(5.0)) / 2.0
+    a = pb_min
+    b = pb_max
+    h = b - a
+
+    c = a + INVPHI2 * h
+    d = a + INVPHI * h
+
+    cost_c = eval_cost_augmented(c, P_d_real, soc_real, n_next, n_prev, pfc_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, lambda_trans, soc_vals, pfc_vals, exp_v_slice)
+    cost_d = eval_cost_augmented(d, P_d_real, soc_real, n_next, n_prev, pfc_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, lambda_trans, soc_vals, pfc_vals, exp_v_slice)
+
+    while abs(h) > tol:
+        if cost_c < cost_d:
+            b = d
+            d = c
+            cost_d = cost_c
+            h = b - a
+            c = a + INVPHI2 * h
+            cost_c = eval_cost_augmented(c, P_d_real, soc_real, n_next, n_prev, pfc_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, lambda_trans, soc_vals, pfc_vals, exp_v_slice)
+        else:
+            a = c
+            c = d
+            cost_c = cost_d
+            h = b - a
+            d = a + INVPHI * h
+            cost_d = eval_cost_augmented(d, P_d_real, soc_real, n_next, n_prev, pfc_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, lambda_trans, soc_vals, pfc_vals, exp_v_slice)
+
+    pb_opt = (a + b) / 2.0
+    return pb_opt, eval_cost_augmented(pb_opt, P_d_real, soc_real, n_next, n_prev, pfc_prev, Ts, p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, Q_bat, C_rep, E_life, lambda_trans, soc_vals, pfc_vals, exp_v_slice)
