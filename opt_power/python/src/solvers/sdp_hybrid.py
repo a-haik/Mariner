@@ -105,21 +105,21 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                                 
                             if n_next > 0 and (p_fc / n_next) > p_max:
                                 penalty += ((p_fc / n_next) - p_max) * 1e6
-                                p_fc = n_next * p_max # Clamp
+                                p_fc = n_next * p_max 
                                 
                             if n_next == 0 and p_fc > 0:
                                 penalty += p_fc * 1e6
                                 p_fc = 0.0 # Clamp
                             
-                            # 2. State Kinematics (Project SoC with Slack Math)
+                            # 2. State Kinematics
                             soc_next = soc_val - (pbatt * (Ts / 3600.0)) / Q_bat
                             
                             if soc_next < soc_min:
                                 penalty += (soc_min - soc_next) * 1e7
-                                soc_next = soc_min # Clamp
+                                soc_next = soc_min 
                             elif soc_next > soc_max:
                                 penalty += (soc_next - soc_max) * 1e7
-                                soc_next = soc_max # Clamp
+                                soc_next = soc_max 
                                 
                             # 3. Instantaneous Cost Calculations
                             C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
