@@ -49,9 +49,14 @@ class AugmentedFCLockedControl(ControlLaw):
         discrete_p_d = self.p_grid[idx_p]
         p_fc_locked = discrete_p_d - p_batt_disc
         
+        # --- THE FIX: Enforce Physical Limits on Intent ---
+        if n_opt == 0:
+            p_fc_locked = 0.0
+        else:
+            p_fc_locked = max(0.0, p_fc_locked)
+        
         self.current_step += 1
         return Action(n_modules=n_opt, p_batt=p_batt_disc, p_fc=p_fc_locked)
-
 
 class AugmentedPolicyControl(ControlLaw):
     """
@@ -92,10 +97,14 @@ class AugmentedPolicyControl(ControlLaw):
             p_batt_opt = bilinear_interp_2d(self.soc_vals, self.pfc_vals, slice_2d, state.soc, state.p_fc_prev)
         
         p_fc_locked = state.P_d - p_batt_opt
+
+        if n_opt == 0:
+            p_fc_locked = 0.0
+        else:
+            p_fc_locked = max(0.0, p_fc_locked)
         
         self.current_step += 1
         return Action(n_modules=n_opt, p_batt=p_batt_opt, p_fc=p_fc_locked)
-
 
 @njit(cache=True)
 def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, pfc_prev: float, Ts: float, 
@@ -248,6 +257,11 @@ class AugmentedValueControl(ControlLaw):
         )
 
         p_fc_locked = P_d_eval - best_pbatt if self.is_macro else state.P_d - best_pbatt
+
+        if int(best_n) == 0:
+            p_fc_locked = 0.0
+        else:
+            p_fc_locked = max(0.0, p_fc_locked)
         
         self.current_step += 1
         return Action(n_modules=int(best_n), p_batt=best_pbatt, p_fc=p_fc_locked)

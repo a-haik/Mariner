@@ -19,7 +19,7 @@ class SimConfig:
     # 2. FUEL CELL PHYSICAL PARAMETERS
     # =========================================================================
     p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
-    p_nom: float = 400.0        # Nominal optimal load per PEMFC module [kW]
+    p_nom: float = 80.0        # Nominal optimal load per PEMFC module [kW]
     n0: int = 0                # Initial number of active fuel cell modules
     nT: int = 0               # Target number of active modules at the end of the voyage
     
@@ -52,8 +52,8 @@ class SimConfig:
     soc_initial: float = 0.5   # Starting State of Charge (50%)
     soc_target: float = 0.5    # Target terminal State of Charge
     
-    pb_max: float = 3000.0   # Maximum discharge limit [kW] (Assumed 2C rate)
-    pb_min: float = -3000.0  # Maximum charge limit [kW]
+    pb_max: float = 2100.0   # Maximum discharge limit [kW] (Assumed 2C rate)
+    pb_min: float = -2100.0  # Maximum charge limit [kW]
     n_cycles_rated: float = 12000.0 # Manufacturer rated cycle life
     dod_rated: float = 0.8     # Depth of discharge for rated cycles
 
@@ -76,7 +76,7 @@ class SimConfig:
     N_pfc: int = 21                    # Grid resolution for previous P_fc dimension
 
     use_smart_grid: bool = True
-    dP: float = 200.0
+    dP: float = 300.0
 
 
     # =========================================================================
