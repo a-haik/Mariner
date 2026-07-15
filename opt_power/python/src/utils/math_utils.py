@@ -156,7 +156,7 @@ def calc_cost_operational(n_active: int, p_fc: float, p_nom: float, tau_fc: floa
         p_fc = 0.0
         
     if n_active <= 0:
-        return np.inf if p_fc > 0 else 0.0
+        return 0.0
         
     p_module = p_fc / n_active
     m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
@@ -211,7 +211,7 @@ def get_c_min_kwh(p_max: float, p_nom: float, tau_fc: float, alpha_fc: float,
         d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p - p_nom)**2) / (p_nom**2))
         cost_rate_sec = (k_h2 * m_dot / 1000.0) + (k_fc * d_fc)
         
-        # Convert €/s to €/kWh
+        # Convert $/s to $/kWh
         cost_kwh = cost_rate_sec * 3600.0 / p
         if cost_kwh < min_cost_per_kwh:
             min_cost_per_kwh = cost_kwh

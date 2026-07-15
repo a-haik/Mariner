@@ -103,7 +103,7 @@ def plot_cost_comparison(simulators, controller_names, title='Cost Breakdown Com
                         textcoords="offset points",
                         ha='center', va='bottom', fontsize=9)
 
-    ax.set_ylabel('Cumulative Cost [€]')
+    ax.set_ylabel('Cumulative Cost [$]')
     ax.set_title(title, fontweight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels(controller_names)
@@ -128,29 +128,29 @@ def plot_benchmarker_results(df: pd.DataFrame, title: str, plot_type: str = 'bar
     """
     if 'Average' in df.index:
         df_runs = df.drop('Average')
-        avg_cost = df.loc['Average', 'Total Cost [€]']
+        avg_cost = df.loc['Average', 'Total Cost [$]']
     else:
         df_runs = df
         avg_cost = None
 
     fig, ax = plt.subplots(figsize=(10, 5))
     
-    costs = df_runs['Total Cost [€]']
+    costs = df_runs['Total Cost [$]']
     x_labels = df_runs.index
 
     if plot_type == 'bar':
         ax.bar(x_labels, costs, color='royalblue', alpha=0.8, edgecolor='black')
-        ax.set_ylabel("Total Cost [€]")
+        ax.set_ylabel("Total Cost [$]")
         plt.xticks(rotation=45, ha='right')
         
     elif plot_type == 'line':
         ax.plot(x_labels, costs, marker='o', color='darkorange', linewidth=2, markersize=8)
-        ax.set_ylabel("Total Cost [€]")
+        ax.set_ylabel("Total Cost [$]")
         plt.xticks(rotation=45, ha='right')
         ax.grid(True, linestyle='--', alpha=0.6)
         
     if avg_cost is not None:
-        ax.axhline(avg_cost, color='red', linestyle='--', linewidth=1.5, label=f'Average Cost: {avg_cost:.2f} €')
+        ax.axhline(avg_cost, color='red', linestyle='--', linewidth=1.5, label=f'Average Cost: {avg_cost:.2f} $')
         ax.legend()
 
     ax.set_title(title, fontweight='bold')
@@ -347,7 +347,7 @@ def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0
     if has_transient:
         ax3.plot(t_hours_jump, cum_cost_tr, label='Transient Cost', color='mediumorchid', linestyle='--')
         
-    ax3.set_ylabel("Cumulative Cost [€]")
+    ax3.set_ylabel("Cumulative Cost [$]")
     ax3.set_yscale('symlog', linthresh=1.0)
     
     if indiv:

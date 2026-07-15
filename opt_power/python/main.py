@@ -70,7 +70,7 @@ def main():
         sim = Simulator(config, P_d_continuous, plant)
         total_cost = sim.run(ctrl)
         simulators.append(sim)
-        print(f"-> {controller_names[idx]:<18} | Total Cost: {total_cost:10.2f} €")
+        print(f"-> {controller_names[idx]:<18} | Total Cost: {total_cost:10.2f} $")
         
     print("\nSaving performance summaries to 'figures/' workspace directory...")
     plot_dynamic_history(simulators, controller_names, save_plot=True)

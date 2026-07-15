@@ -19,29 +19,34 @@ class SimConfig:
     # 2. FUEL CELL PHYSICAL PARAMETERS
     # =========================================================================
     p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
-    p_nom: float = 80.0        # Nominal optimal load per PEMFC module [kW]
+    p_nom: float = 400.0        # Nominal optimal load per PEMFC module [kW]
     n0: int = 0                # Initial number of active fuel cell modules
     nT: int = 0               # Target number of active modules at the end of the voyage
     
     # Degradation & Cost Coefficients
     tau_fc: float = 50000.0    # Expected service life at steady nominal operation [Hours]
-    S_max: float = 4000.0      # Maximum start/stop cycles before failure
-    c_fc: float = 750          # FC module replacement cost [€/kW]
-    k_h2: float = 4.0          # Hydrogen fuel cost [€/kg]
+    # S_max: float = 4000.0      # Maximum start/stop cycles before failure
+    c_fc: float = 960          # FC module replacement cost [$/kW]
+    k_h2: float = 4.0          # Hydrogen fuel cost [$/kg]
     alpha_fc: float = 1.0      # Degradation penalty factor for off-nominal loads
-    delta_vlc: float = 1.79e-6 # Voltage drop rate [V/kW]
+    delta_vswitch: float = 0.98e-6 # Switching voltage drop [V]
+    delta_vlc: float = 1.79e-6 # Load-change voltage drop rate [V/kW]
     v_drop_max: float = 0.07   # Max permitted voltage drop (10% of nominal voltage)
     
     # Hydrogen Consumption Curve Coefficients (m_dot_H2 = a0 + a1*p + a2*p^2)
-    a0: float = 55.8460e-3     # [g/s]
-    a1: float = 10.0800e-3     # [g/(s*kW)]
-    a2: float = 0.0556e-3      # [g/(s*kW^2)]
+    # a0: float = 55.8460e-3     # [g/s]
+    # a1: float = 10.0800e-3     # [g/(s*kW)]
+    # a2: float = 0.0556e-3      # [g/(s*kW^2)]
+
+    a0: float = 8.68055556e-02    # [g/s]
+    a1: float = 9.54861111e-03     # [g/(s*kW)]
+    a2: float = 5.42534722e-05    # [g/(s*kW^2)]
     
     # =========================================================================
     # 3. BATTERY PHYSICAL PARAMETERS (Hybrid Additions)
     # =========================================================================
-    Q_bat: float = 2000.0        # Nominal capacity of the battery pack [kWh]
-    c_bat_kwh: float = 250.0   # Replacement cost per kWh [€/kWh]
+    Q_bat: float = 500.0        # Nominal capacity of the battery pack [kWh]
+    c_bat_kwh: float = 178.41   # Replacement cost per kWh [$/kWh]
     soc_min: float = 0.2       # Minimum safe State of Charge (20%)
     soc_max: float = 0.8       # Maximum safe State of Charge (80%)
     soc_initial: float = 0.5   # Starting State of Charge (50%)
@@ -65,13 +70,13 @@ class SimConfig:
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
 
     N_Pd: int = 8         # Number of discrete load levels (Power demand Grid)
-    N_n: int = 16          # Number of fuel cell modules on board
+    N_n: int = 15          # Number of fuel cell modules on board
     N_soc: int = 61       # Grid resolution for SoC dimension (SoC Grid)
     N_pb: int = 61        # Grid resolution for P_batt dimension (P_batt grid)
     N_pfc: int = 21                    # Grid resolution for previous P_fc dimension
 
     use_smart_grid: bool = True
-    dP: float = 400.0
+    dP: float = 200.0
 
 
     # =========================================================================
@@ -101,10 +106,10 @@ class SimConfig:
         os.makedirs(abs_vault_dir, exist_ok=True)
 
         # --- DERIVED PHYSICAL CONSTANTS ---
-        # Total fuel cell stacks replacement cost [€]
+        # Total fuel cell stacks replacement cost [$]
         object.__setattr__(self, 'k_fc', self.c_fc * self.p_max)
 
-        # Total battery replacement cost [€]
+        # Total battery replacement cost [$]
         object.__setattr__(self, 'C_rep', self.Q_bat * self.c_bat_kwh)
         
         # Total lifetime energy throughput (Doubled for bidirectional wear calculation) [kWh]
@@ -112,6 +117,9 @@ class SimConfig:
 
         # Financial penalty per kW of fuel cell power variation
         object.__setattr__(self, 'lambda_trans', self.delta_vlc * self.c_fc / self.v_drop_max)
+        
+        # # Maximum start/stop cycles before failure
+        object.__setattr__(self, 'S_max', self.v_drop_max / self.delta_vswitch)
 
         # --- GRID GENERATION ---
         # 1D discrete array for the module count dimension

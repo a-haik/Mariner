@@ -29,7 +29,7 @@ class TestMathIntegration(unittest.TestCase):
         expected_m_dot = self.config.a0 + (self.config.a1 * p_module) + (self.config.a2 * (p_module**2))
         # Expected Degradation [1/s] (Should be baseline since p_module == p_nom)
         expected_d_fc = 1.0 / (3600.0 * self.config.tau_fc)
-        # Expected Total Cost [€/s]
+        # Expected Total Cost [$/s]
         expected_cost = (self.config.k_h2 * expected_m_dot / 1000.0) + (self.config.k_fc * expected_d_fc)
 
         # 4. Assert correctness up to 6 decimal places

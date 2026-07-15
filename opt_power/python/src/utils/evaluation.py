@@ -155,13 +155,13 @@ class VoyageBenchmarker:
         
         # Include offline_time in the final dictionary!
         metrics = {
-            'Total Cost [€]': sim_results['total_cost'],
-            'Operating Cost [€]': sum(sim.history.get('cost_o', [0.0])),
-            'Switching Cost [€]': sum(sim.history.get('cost_s', [0.0])),
-            'Battery Cost [€]': sum(sim.history.get('cost_bat', [0.0])),
-            'Transient Cost [€]': sum(sim.history.get('cost_tr', [0.0])), 
-            'Term. Switch Cost [€]': sim_results['terminal_n_cost'],
-            'Term. SoC Cost [€]': sim_results['terminal_soc_cost'],
+            'Total Cost [$]': sim_results['total_cost'],
+            'Operating Cost [$]': sum(sim.history.get('cost_o', [0.0])),
+            'Switching Cost [$]': sum(sim.history.get('cost_s', [0.0])),
+            'Battery Cost [$]': sum(sim.history.get('cost_bat', [0.0])),
+            'Transient Cost [$]': sum(sim.history.get('cost_tr', [0.0])), 
+            'Term. Switch Cost [$]': sim_results['terminal_n_cost'],
+            'Term. SoC Cost [$]': sim_results['terminal_soc_cost'],
             'Offline Compute Time [s]': offline_time,
             'Online Compute Time [s]': calc_time        
         }
