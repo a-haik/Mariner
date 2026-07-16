@@ -52,8 +52,8 @@ class SimConfig:
     soc_initial: float = 0.5   # Starting State of Charge (50%)
     soc_target: float = 0.5    # Target terminal State of Charge
     
-    pb_max: float = 2100.0   # Maximum discharge limit [kW] (Assumed 2C rate)
-    pb_min: float = -2100.0  # Maximum charge limit [kW]
+    pb_max: float = 1050.0   # Maximum discharge limit [kW] (Assumed 2C rate)
+    pb_min: float = -1050.0  # Maximum charge limit [kW]
     n_cycles_rated: float = 12000.0 # Manufacturer rated cycle life
     dod_rated: float = 0.8     # Depth of discharge for rated cycles
 
@@ -76,7 +76,7 @@ class SimConfig:
     N_pfc: int = 21                    # Grid resolution for previous P_fc dimension
 
     use_smart_grid: bool = True
-    dP: float = 300.0
+    dP: float = 150.0
 
 
     # =========================================================================
@@ -153,8 +153,7 @@ class SimConfig:
                 idx_tgt = int(np.round((self.soc_target - self.soc_min) / dSoC))
                 object.__setattr__(self, 'soc_target', float(soc_grid[idx_tgt]))
             
-            # Estimate demand size based on the ceiling
-            N_Pd_est = int(np.ceil(max_fc_power / self.dP))
+            object.__setattr__(self, 'N_Pd', int(np.ceil(max_fc_power / self.dP)))
             
         else:
             # Legacy Manual Grids
@@ -162,11 +161,10 @@ class SimConfig:
             object.__setattr__(self, 'pb_vals', np.linspace(self.pb_min, self.pb_max, self.N_pb))
             object.__setattr__(self, 'pfc_vals', np.linspace(0.0, max_fc_power, self.N_pfc))
             
-            N_Pd_est = self.N_Pd
             
             
         # Fire the diagnostic tracker
-        self._print_complexity_diagnostics(N_Pd_est)
+        self._print_complexity_diagnostics(self.N_Pd)
 
         # --- SANITY CHECKS ---
 
