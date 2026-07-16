@@ -397,13 +397,27 @@ def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0
             ax4.axhline(soc_init, color='gray', linewidth=1.5, linestyle=':', 
                         label=f'Initial SoC ({int(soc_init)}%)')
         
-        # Right Axis: Battery Power Area Plot
+# Right Axis: Battery Power Area Plot
         ax4_twin = ax4.twinx()
         ax4_twin.plot(t_hours, df['p_batt_actual'], color='gray', linewidth=0.5, alpha=0.5)
 
         p_max = df['p_batt_actual'].abs().max()
         limit_p = max(p_max * 1.1, 1.0) # Graceful fallback if battery is unused (max=0)
-        ax4_twin.set_ylim([-limit_p, limit_p])
+        
+        # 1. Find where soc_init sits proportionally on the left axis (0 to 100 scale)
+        soc_fraction = soc_init / 100.0
+        
+        # Clamp the fraction slightly so the power plot doesn't disappear 
+        # off-screen if soc_init happens to be exactly 0% or 100%
+        soc_fraction = max(0.1, min(0.9, soc_fraction)) 
+        
+        # 2. Calculate the total required span for the right y-axis.
+        # We check both the positive and negative required sides to ensure no clipping.
+        total_span = max(limit_p / (1 - soc_fraction), limit_p / soc_fraction)
+        
+        # 3. Set the asymmetric limits
+        ax4_twin.set_ylim([-total_span * soc_fraction, total_span * (1 - soc_fraction)])
+        # ----------------------------------------
         
         # Fill positive/negative
         ax4_twin.fill_between(t_hours, 0, df['p_batt_actual'], 

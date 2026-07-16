@@ -52,8 +52,8 @@ class SimConfig:
     soc_initial: float = 0.5   # Starting State of Charge (50%)
     soc_target: float = 0.5    # Target terminal State of Charge
     
-    pb_max: float = 1050.0   # Maximum discharge limit [kW] (Assumed 2C rate)
-    pb_min: float = -1050.0  # Maximum charge limit [kW]
+    pb_max: float = 1200.0   # Maximum discharge limit [kW] (Assumed 2C rate)
+    pb_min: float = -1200.0  # Maximum charge limit [kW]
     n_cycles_rated: float = 12000.0 # Manufacturer rated cycle life
     dod_rated: float = 0.8     # Depth of discharge for rated cycles
 
@@ -76,7 +76,7 @@ class SimConfig:
     N_pfc: int = 21                    # Grid resolution for previous P_fc dimension
 
     use_smart_grid: bool = True
-    dP: float = 150.0
+    dP: float = 200.0
 
 
     # =========================================================================
