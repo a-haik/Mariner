@@ -81,22 +81,34 @@ class VoyageBenchmarker:
             
             if getattr(self.config, 'use_smart_grid', False):
                 dP = self.config.dP
-                max_fc_power = self.config.N_n * self.config.p_max
-                
-                # 1. Force the levels to be [dP, 2dP, 3dP...]
-                # Adding dP/2.0 to the stop parameter prevents np.arange from cutting off the final node
-                smart_levels = np.arange(dP, max_fc_power + (dP / 2.0), dP)
-                
-                # 2. Derive edges exactly halfway between levels [1.5dP, 2.5dP, 3.5dP...]
-                smart_edges = smart_levels[:-1] + (dP / 2.0)
-                
-                # 3. Add absolute lower (-0.001) and safe upper boundaries
                 max_observed = ds_train['Pd'].max()
-                safe_upper_bound = max(max_observed + 1.0, smart_levels[-1] + dP)
-                smart_edges = np.concatenate(([-1e-3], smart_edges, [safe_upper_bound]))
                 
-                # 4. Pass BOTH arrays to completely lock the mathematical lattice
-                mc_model = fit_dtmc(ds_train['Pd'], len(smart_levels), self.config.alpha_mc, 
+                # 1. Generate the EXACT same bin edges the legacy code used
+                from src.utils.data_processing import _make_edges_quantile_numba
+                legacy_edges = _make_edges_quantile_numba(ds_train['Pd'], self.config.N_Pd)
+                
+                # 2. Calculate the exact same midpoints the supervisor used
+                ideal_levels = np.zeros(self.config.N_Pd)
+                for idx in range(self.config.N_Pd):
+                    ideal_levels[idx] = (legacy_edges[idx] + legacy_edges[idx+1]) / 2.0
+                
+                # 3. Define the absolute physical dP lattice 
+                max_lattice_val = max(max_observed + dP, self.config.N_Pd * dP)
+                full_lattice = np.arange(0.0, max_lattice_val + (dP / 2.0), dP)
+                
+                # 4. Use the Meta-DP solver to snap the supervisor's midpoints to the dP grid
+                from src.utils.data_processing import _find_optimal_lattice_subset
+                smart_levels = _find_optimal_lattice_subset(ideal_levels, full_lattice)
+                
+                # 5. Derive boundaries (edges) exactly halfway between our chosen sparse levels
+                smart_edges = np.zeros(self.config.N_Pd + 1)
+                smart_edges[0] = -1e-3  # Absolute safe lower bound
+                smart_edges[-1] = max_lattice_val + dP # Safe upper bound
+                for idx in range(1, self.config.N_Pd):
+                    smart_edges[idx] = (smart_levels[idx-1] + smart_levels[idx]) / 2.0
+                
+                # 6. Lock the Markov Math
+                mc_model = fit_dtmc(ds_train['Pd'], self.config.N_Pd, self.config.alpha_mc, 
                                     manual_edges=smart_edges, manual_levels=smart_levels)
                 
             else:

@@ -59,12 +59,10 @@ class ModelVault:
     # =========================================================================
 
     def generate_markov_hash(self, train_days: list, config) -> str:
-        """The Markov Chain only depends on the training data and grid resolution parameters."""
+        """The Markov Chain depends on training data and all grid/physics parameters."""
         run_signature = {
             "train_days": sorted(train_days),
-            "Ts": config.Ts,
-            "N_Pd": config.N_Pd,
-            "alpha_mc": config.alpha_mc
+            "config": self._extract_math_primitives(config) # Use the full primitive extractor!
         }
         sig_string = json.dumps(run_signature, sort_keys=True)
         return hashlib.sha256(sig_string.encode('utf-8')).hexdigest()

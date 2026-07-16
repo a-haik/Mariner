@@ -259,3 +259,49 @@ def fit_dtmc(power_samples, m_states: int, alpha: float = 0.5, manual_edges: np.
         levels = np.array(manual_levels, dtype=np.float64)
         
     return {'P': P, 'N': N, 'pi': stationary_pi, 'edges': edges, 'levels': levels}
+
+
+@njit(cache=True)
+def _find_optimal_lattice_subset(ideal_nodes: np.ndarray, lattice: np.ndarray) -> np.ndarray:
+    """
+    Uses Dynamic Programming to find the exact optimal subset of 'lattice' 
+    that minimizes the Mean Squared Quantization Error to 'ideal_nodes'.
+    """
+    K = len(ideal_nodes)
+    N = len(lattice)
+    
+    # dp[n, k] = min squared error matching first k ideal nodes using a subset of first n lattice nodes
+    dp = np.full((N + 1, K + 1), np.inf)
+    choice = np.zeros((N + 1, K + 1), dtype=np.int32)
+    
+    # Base case: 0 error to match 0 nodes
+    for n in range(N + 1):
+        dp[n, 0] = 0.0
+        
+    for n in range(1, N + 1):
+        for k in range(1, K + 1):
+            if k > n:
+                continue # Impossible to match k items with fewer than k lattice nodes
+            
+            cost_skip = dp[n - 1, k]
+            cost_use = dp[n - 1, k - 1] + (ideal_nodes[k - 1] - lattice[n - 1])**2
+            
+            if cost_use < cost_skip:
+                dp[n, k] = cost_use
+                choice[n, k] = 1 
+            else:
+                dp[n, k] = cost_skip
+                choice[n, k] = 0 
+                
+    # Backtrack to reconstruct the optimal grid
+    optimal_grid = np.zeros(K, dtype=np.float64)
+    n, k = N, K
+    while k > 0:
+        if choice[n, k] == 1:
+            optimal_grid[k - 1] = lattice[n - 1]
+            k -= 1
+            n -= 1
+        else:
+            n -= 1
+            
+    return optimal_grid
