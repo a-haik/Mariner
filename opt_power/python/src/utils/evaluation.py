@@ -2,6 +2,7 @@
 import time
 import numpy as np
 import pandas as pd
+from src.config import EnvConfig, SimConfig
 from src.utils.data_processing import downsample_block_mean, fit_dtmc
 from src.simulator import Simulator
 from src.utils.vault import ModelVault
@@ -44,14 +45,13 @@ class VoyageBenchmarker:
     Automated evaluation engine.
     Now separated into Phase 1 (Model Training/Fetching) and Phase 2 (Fast Simulation).
     """
-    def __init__(self, fleet_cache: dict, config, exclude_days: list = None):
+    def __init__(self, fleet_cache: dict, env_config: EnvConfig, config: SimConfig, exclude_days: list = None):
         self.fleet_cache = fleet_cache
-        self.config = config
+        self.env_config = env_config  # Save the path configuration
+        self.config = config          # Save the physics configuration
         self.exclude_days = exclude_days or []
         self.valid_days = sorted([d for d in fleet_cache.keys() if d not in self.exclude_days])
-        
-        # Initialize the new ModelVault pointing to the path in SimConfig
-        self.vault = ModelVault(self.config.vault_dir)
+        self.vault = ModelVault(self.env_config.vault_dir)
 
     def _get_or_compute_models(self, train_days: list, solver_cls, horizon_length: int):
         total_offline_time = 0.0

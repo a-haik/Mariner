@@ -3,6 +3,9 @@ from dataclasses import dataclass, field
 import numpy as np
 import os
 
+# =========================================================================
+# THE PHYSICS CONFIG (Pure Math & Physics Only)
+# =========================================================================
 @dataclass(frozen=True)
 class SimConfig:
     """
@@ -18,8 +21,15 @@ class SimConfig:
     # =========================================================================
     # 2. FUEL CELL PHYSICAL PARAMETERS
     # =========================================================================
-    p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
-    p_nom: float = 80.0        # Nominal optimal load per PEMFC module [kW]
+    # p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
+    # p_nom: float = 80.0        # Nominal optimal load per PEMFC module [kW]
+
+    # p_max: float = 400.0       # Absolute ceiling power per PEMFC module [kW]
+    # p_nom: float = 160.0        # Nominal optimal load per PEMFC module [kW]
+
+    p_max: float = 800.0       # Absolute ceiling power per PEMFC module [kW]
+    p_nom: float = 320.0        # Nominal optimal load per PEMFC module [kW]
+
     n0: int = 0                # Initial number of active fuel cell modules
     nT: int = 0               # Target number of active modules at the end of the voyage
     
@@ -34,14 +44,30 @@ class SimConfig:
     v_drop_max: float = 0.07   # Max permitted voltage drop (10% of nominal voltage)
     
     # Hydrogen Consumption Curve Coefficients (m_dot_H2 = a0 + a1*p + a2*p^2)
+
+    # Values in draft
     # a0: float = 55.8460e-3     # [g/s]
     # a1: float = 10.0800e-3     # [g/(s*kW)]
-    # a2: float = 0.0556e-3      # [g/(s*kW^2)]
+    # a2: float = 5.56e-5      # [g/(s*kW^2)]
 
-    a0: float = 8.68055556e-02    # [g/s]
-    a1: float = 9.54861111e-03     # [g/(s*kW)]
-    a2: float = 5.42534722e-05    # [g/(s*kW^2)]
+    # Values to reach 60% eff at 40kW and 55% eff at 80kW
 
+    # Individual 200kW modules
+    # a0: float = 8.68055556e-02    # [g/s]
+    # a1: float = 9.54861111e-03     # [g/(s*kW)]
+    # a2: float = 5.42534722e-05    # [g/(s*kW^2)]
+
+    # Packs of 2 modules 
+    # a0: float = 1.73611111e-01    # [g/s]
+    # a1: float = 9.54861111e-03    # [g/(s*kW)]
+    # a2: float = 2.71267361e-05    # [g/(s*kW^2)]
+
+    # Packs of 4 modules 
+    a0: float = 3.47222222e-01    # [g/s]
+    a1: float = 9.54861111e-03    # [g/(s*kW)]
+    a2: float = 1.35633681e-05    # [g/(s*kW^2)]
+
+    # Packs of 5 modules 
     # a0: float = 4.34027778e-01    # [g/s]
     # a1: float = 9.54861111e-03     # [g/(s*kW)]
     # a2: float = 1.08506944e-05    # [g/(s*kW^2)]
@@ -73,22 +99,16 @@ class SimConfig:
 
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
 
-    N_Pd: int = 8         # Number of discrete load levels (Power demand Grid)
-    N_n: int = 14          # Number of fuel cell modules on board
+    N_Pd: int = 21         # Number of discrete load levels (Power demand Grid)
+    N_n: int = 4          # Number of fuel cell modules on board
 
     N_soc: int = 25       # Grid resolution for SoC dimension (SoC Grid)
     N_pb: int = 15        # Grid resolution for P_batt dimension (P_batt grid)
     N_pfc: int = 20                    # Grid resolution for previous P_fc dimension
 
     use_smart_grid: bool = True
-    dP: float = 150.0
-
-
-    # =========================================================================
-    # 6. DIRECTORY & PATH MANAGEMENT
-    # =========================================================================
-    data_dir: str = "../data/raw/"
-    vault_dir: str = "../data/vault/"
+    dP: float = 50.0
+    verbose: bool = True
 
     # Derived fields (populated automatically in __post_init__)
     C_rep: float = field(init=False)
@@ -97,15 +117,6 @@ class SimConfig:
 
     def __post_init__(self):
         """Sanity check validations and derivation of mathematical constants."""
-        # --- PATH RESOLUTION ---
-        python_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        abs_data_dir = os.path.abspath(os.path.join(python_dir, self.data_dir))
-        abs_vault_dir = os.path.abspath(os.path.join(python_dir, self.vault_dir))
-        
-        object.__setattr__(self, 'data_dir', abs_data_dir)
-        object.__setattr__(self, 'vault_dir', abs_vault_dir)
-        os.makedirs(abs_vault_dir, exist_ok=True)
-
         # --- DERIVED PHYSICAL CONSTANTS ---
         object.__setattr__(self, 'k_fc', self.c_fc * self.p_max)
         object.__setattr__(self, 'C_rep', self.Q_bat * self.c_bat_kwh)
@@ -142,7 +153,6 @@ class SimConfig:
             object.__setattr__(self, 'N_soc', len(soc_grid))
 
             # 4. Snap Target SOC to the newly phased lattice
-            # (soc_initial requires NO snapping, it is mathematically guaranteed to be on the grid)
             if hasattr(self, 'soc_target'):
                 idx_tgt = (np.abs(soc_grid - self.soc_target)).argmin()
                 object.__setattr__(self, 'soc_target', float(soc_grid[idx_tgt]))
@@ -154,7 +164,8 @@ class SimConfig:
             object.__setattr__(self, 'pfc_vals', np.linspace(0.0, max_fc_power, self.N_pfc))
             
         # Fire the diagnostic tracker
-        self._print_complexity_diagnostics(self.N_Pd)
+        if self.verbose:
+            self._print_complexity_diagnostics(self.N_Pd)
 
         # --- SANITY CHECKS ---
         if self.p_max <= 0 or self.p_nom <= 0:
@@ -210,3 +221,33 @@ class SimConfig:
         print(f" -> Est. Big-O Comput. : O({transitions:,}) operations")
         print(f" -> Est. RAM Footprint : ~{memory_mb:.2f} MB")
         print("="*55 + "\n")
+
+# =========================================================================
+# THE NEW ENVIRONMENT CONFIG (Paths & Directories Only)
+# =========================================================================
+@dataclass(frozen=True)
+class EnvConfig:
+    """
+    Manages absolute paths and directory creation for the local machine.
+    Kept strictly separate from physics parameters to ensure Vault hashing consistency.
+    """
+    data_dir_rel: str = "../data/raw/"
+    vault_dir_rel: str = "../data/vault/"
+    cache_dir_rel: str = "../data/cache/"
+
+    # Derived absolute paths
+    data_dir: str = field(init=False)
+    vault_dir: str = field(init=False)
+    cache_dir: str = field(init=False)
+
+    def __post_init__(self):
+        # Anchor the base directory to the 'python/' folder (one level up from src/)
+        python_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        object.__setattr__(self, 'data_dir', os.path.abspath(os.path.join(python_dir, self.data_dir_rel)))
+        object.__setattr__(self, 'vault_dir', os.path.abspath(os.path.join(python_dir, self.vault_dir_rel)))
+        object.__setattr__(self, 'cache_dir', os.path.abspath(os.path.join(python_dir, self.cache_dir_rel)))
+        
+        # Ensure the directories actually exist before anything tries to write to them
+        os.makedirs(self.vault_dir, exist_ok=True)
+        os.makedirs(self.cache_dir, exist_ok=True)

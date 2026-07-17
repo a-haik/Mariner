@@ -33,22 +33,17 @@ class ModelVault:
 
     def _extract_math_primitives(self, config) -> dict:
         """
-        Strips out complex objects (Numba/NumPy arrays) AND environment-specific
-        paths to guarantee cross-machine determinism.
+        Strips out complex objects (Numba/NumPy arrays) to guarantee cross-machine determinism.
         Tracks NumPy array shapes so grid resolution changes trigger recomputes.
         """
         primitives = {}
         config_dict = asdict(config) if hasattr(config, '__dataclass_fields__') else config.__dict__
         
-        # We must exclude paths, otherwise the hash changes depending on the computer!
-        exclude_keys = {'data_dir', 'vault_dir'}
-        
+        # We no longer need to exclude paths because SimConfig only holds physics!
         for k, v in config_dict.items():
-            if k in exclude_keys:
-                continue
             if isinstance(v, (int, float, str, bool)):
                 primitives[k] = v
-            # NEW: Safely hash array shapes so grid resolution changes trigger a recompute
+            # Safely hash array shapes so grid resolution changes trigger a recompute
             elif isinstance(v, np.ndarray):
                 primitives[f"{k}_shape"] = v.shape
                 

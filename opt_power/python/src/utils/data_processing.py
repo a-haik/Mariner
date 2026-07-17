@@ -3,8 +3,9 @@ import os
 import numpy as np
 import pandas as pd
 import numba
+import time
 from numba import njit
-from src.config import SimConfig
+from src.config import EnvConfig,SimConfig
 from matio import load_from_mat
 
 # ==============================================================================
@@ -69,21 +70,46 @@ def load_and_interpolate_sov_data(file_paths: list[str]) -> dict:
     }
 
 
-def load_and_cache_entire_fleet(config: SimConfig) -> dict[int, dict]:
+def load_and_cache_entire_fleet(config: EnvConfig) -> dict[int, dict]:
     """
-    Executes disk I/O exactly once to cache all available days (1-14) in RAM.
+    Executes disk I/O to cache all available days (1-14) in RAM.
+    Uses a compressed binary .npz file for lightning-fast subsequent loads.
     Falls back gracefully to mock data if specific file frames are missing.
     """
+    # Define the binary cache file location
+    cache_path = os.path.join(config.cache_dir, "fleet_data_cache.npz")
+    
+    # --- STAGE 1: Try to load from the lightning-fast binary cache ---
+    if os.path.exists(cache_path):
+        print(f"Loading fleet data from binary cache: {cache_path}")
+        start_t = time.perf_counter()
+        fleet_cache = {}
+        
+        with np.load(cache_path) as data:
+            # The files inside the .npz are named 'day_1_t', 'day_1_Pd', etc.
+            for file_key in data.files:
+                parts = file_key.split('_')
+                day_num = int(parts[1])
+                var_name = parts[2]  # 't' or 'Pd'
+                
+                if day_num not in fleet_cache:
+                    fleet_cache[day_num] = {}
+                fleet_cache[day_num][var_name] = data[file_key]
+                
+        print(f" -> Cache instantly loaded in {time.perf_counter() - start_t:.3f} seconds.")
+        return fleet_cache
+
+    # --- STAGE 2: If no cache exists, do the heavy MATLAB parsing ---
     fleet_cache = {}
     dir = config.data_dir
     all_fleet_files = [f"{dir}/SOV_{day:02d}-Feb-2023.mat" for day in range(1, 15)]
     
-    print("Beginning memory staging of all 14 fleet files into RAM...")
+    print("Binary cache not found. Parsing raw .mat files (this will take ~15 seconds)...")
     for idx, path in enumerate(all_fleet_files):
         day_num = idx + 1
         if os.path.exists(path):
             fleet_cache[day_num] = load_and_interpolate_sov_data([path])
-            print(f" -> Day {day_num:02d} successfully cached in RAM.")
+            print(f" -> Day {day_num:02d} successfully parsed.")
         else:
             # Graceful fallback configuration for local environments missing certain days
             print(f" [!] File not found at {path}. Generating fallback numerical profile for Day {day_num:02d}...")
@@ -91,7 +117,20 @@ def load_and_cache_entire_fleet(config: SimConfig) -> dict[int, dict]:
             pd_mock = 600.0 + 200.0 * np.sin(2 * np.pi * t_mock / 86400) + np.random.normal(0, 30, len(t_mock))
             fleet_cache[day_num] = {'t': t_mock, 'Pd': pd_mock}
             
-    print("\nAll 14 operational days securely held in RAM. Disk I/O locked.")
+    # --- STAGE 3: Save the parsed data to the binary cache for next time ---
+    print("Compressing and writing data to binary cache...")
+    save_dict = {}
+    # Flatten the dictionary so numpy can save it as individual arrays
+    for day_num, data_dict in fleet_cache.items():
+        save_dict[f"day_{day_num}_t"] = data_dict['t']
+        save_dict[f"day_{day_num}_Pd"] = data_dict['Pd']
+
+    cache_dir = os.path.dirname(cache_path)
+    os.makedirs(cache_dir, exist_ok=True)
+        
+    np.savez_compressed(cache_path, **save_dict)
+    print("All 14 operational days securely held in RAM and backed up to disk.")
+    
     return fleet_cache
 
 
