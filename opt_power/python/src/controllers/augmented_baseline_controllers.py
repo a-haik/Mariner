@@ -14,11 +14,11 @@ class AugmentedSDPBaselineControl(ControlLaw):
         self.n_vals = n_vals
         self.pfc_vals = pfc_vals
         self.policy = policy_matrix
-        self.current_step = 0
 
-    def get_action(self, state: State) -> Action:
-        t_idx = min(self.current_step, len(self.policy) - 1)
-        
+    def get_action(self, state: State, time_sec: float) -> Action:
+        macro_idx = int(time_sec // self.config.Ts)
+        t_idx = min(macro_idx, len(self.policy) - 1)
+
         # 1. Snap 3D continuous sensors to discrete grid
         idx_p = nearest_index_1d(self.p_grid, state.P_d)
         idx_n = nearest_index_1d(self.n_vals, float(state.n_prev))
@@ -28,6 +28,4 @@ class AugmentedSDPBaselineControl(ControlLaw):
         best_n_idx = self.policy[t_idx, idx_p, idx_n, idx_pfc]
         n_opt = int(self.n_vals[best_n_idx])
         
-        # 3. In a pure FC system, the FC MUST match the demand exactly
-        self.current_step += 1
         return Action(n_modules=n_opt, p_batt=0.0, p_fc=state.P_d)

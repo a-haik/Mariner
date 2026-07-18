@@ -36,12 +36,8 @@ class Simulator:
             self.history['time'].append(time_sec)
             self.history['P_d'].append(self.P_d[t])
             
-            # PING THE CONTROLLER (Macro Time Step Only)
-            if time_sec % self.config.Ts == 0:
-                current_action = controller.get_action(current_state)
-                
-                # if t == 0:
-                #     current_state.n_prev = current_action.n_modules
+            # PING THE CONTROLLER
+            current_action = controller.get_action(current_state, time_sec)
 
             # STEP THE PLANT
             current_state, telemetry = self.plant.step(

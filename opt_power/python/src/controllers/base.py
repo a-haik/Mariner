@@ -11,12 +11,13 @@ class ControlLaw(ABC):
     to discrete step-by-step evaluation for continuous ZOH simulation.
     """
     @abstractmethod
-    def get_action(self, state: State) -> Action:
+    def get_action(self, state: State, time_sec: float) -> Action:
         """
         Evaluates the current physical state and returns the optimal control action.
         
         Parameters:
             state: The current State object (Demand, Previous Modules, SoC).
+            time_sec: The current time in seconds.
             
         Returns:
             action: The Action object (Modules to activate, Battery power split).

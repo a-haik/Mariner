@@ -21,47 +21,60 @@ class AugmentedFCLockedControl(ControlLaw):
     Simulates real-world hardware limits (PLCs). Snaps continuous reality to 
     the 4D discrete SDP grid, extracting a rigid fuel cell setpoint.
     """
-    def __init__(self, p_grid: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray, 
+    def __init__(self, config: SimConfig, p_grid: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray, 
                  pfc_vals: np.ndarray, policy_n: np.ndarray, policy_pbatt: np.ndarray):
+        self.config = config
         self.p_grid = p_grid
         self.n_vals = n_vals
         self.soc_vals = soc_vals
         self.pfc_vals = pfc_vals
         self.policy_n = policy_n
         self.policy_pbatt = policy_pbatt
-        self.current_step = 0
+        
+        # --- ZOH CACHE VARIABLES ---
+        self.last_macro_idx = -1
+        self.locked_action = None
 
-    def get_action(self, state: State) -> Action:
-        t_idx = min(self.current_step, len(self.policy_n) - 1)
+    def get_action(self, state: State, time_sec: float) -> Action:
         
-        # 1. Snap 4D continuous sensors to discrete grid
-        idx_p = nearest_index_1d(self.p_grid, state.P_d)
-        idx_n = nearest_index_1d(self.n_vals, float(state.n_prev))
-        idx_soc = nearest_index_1d(self.soc_vals, state.soc)
-        idx_pfc = nearest_index_1d(self.pfc_vals, state.p_fc_prev)
+        macro_idx = int(time_sec // self.config.Ts)
         
-        # 2. Extract discrete intents from 4D array
-        best_n_idx = self.policy_n[t_idx, idx_p, idx_n, idx_soc, idx_pfc]
-        n_opt = int(self.n_vals[best_n_idx])
-        p_batt_disc = float(self.policy_pbatt[t_idx, idx_p, idx_n, idx_soc, idx_pfc])
+        # ZERO-ORDER HOLD: Only evaluate at the start of a new 300s macro-step!
+        if macro_idx > self.last_macro_idx:
+            self.last_macro_idx = macro_idx
+            t_idx = min(macro_idx, len(self.policy_n) - 1)
+            
+            # 1. Snap 4D continuous sensors to discrete grid
+            idx_p = nearest_index_1d(self.p_grid, state.P_d)
+            idx_n = nearest_index_1d(self.n_vals, float(state.n_prev))
+            idx_soc = nearest_index_1d(self.soc_vals, state.soc)
+            idx_pfc = nearest_index_1d(self.pfc_vals, state.p_fc_prev)
+            
+            # 2. Extract discrete intents
+            best_n_idx = self.policy_n[t_idx, idx_p, idx_n, idx_soc, idx_pfc]
+            n_opt = int(self.n_vals[best_n_idx])
+            p_batt_disc = float(self.policy_pbatt[t_idx, idx_p, idx_n, idx_soc, idx_pfc])
+            
+            # 3. Calculate Intended Rigid FC Setpoint
+            discrete_p_d = self.p_grid[idx_p]
+            p_fc_locked = discrete_p_d - p_batt_disc
+            
+            if n_opt == 0:
+                p_fc_locked = 0.0
+            else:
+                p_fc_locked = max(0.0, p_fc_locked)
+            
+            # Lock the intent!
+            self.locked_action = Action(n_modules=n_opt, p_batt=p_batt_disc, p_fc=p_fc_locked)
         
-        # 3. Calculate Intended Rigid FC Setpoint based on the grid's belief
-        discrete_p_d = self.p_grid[idx_p]
-        p_fc_locked = discrete_p_d - p_batt_disc
-        
-        # --- THE FIX: Enforce Physical Limits on Intent ---
-        if n_opt == 0:
-            p_fc_locked = 0.0
-        else:
-            p_fc_locked = max(0.0, p_fc_locked)
-        
-        self.current_step += 1
-        return Action(n_modules=n_opt, p_batt=p_batt_disc, p_fc=p_fc_locked)
+        # For the next 299 seconds, the exact same locked P_fc is returned.
+        # The plant will dynamically route the 1Hz P_d noise into the battery!
+        return self.locked_action
+
 
 class AugmentedPolicyControl(ControlLaw):
     """
     Smooths out the discrete policy matrices via 2D Bilinear Interpolation.
-    Interpolates over the two continuous variables: SoC and P_fc_prev.
     """
     def __init__(self, config: SimConfig, p_grid: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray, 
                  pfc_vals: np.ndarray, policy_n: np.ndarray, policy_pbatt: np.ndarray, is_macro: bool = False):
@@ -73,38 +86,46 @@ class AugmentedPolicyControl(ControlLaw):
         self.pfc_vals = pfc_vals
         self.policy_n = policy_n
         self.policy_pbatt = policy_pbatt
-        self.current_step = 0
+        
+        # --- ZOH CACHE VARIABLES ---
+        self.last_macro_idx = -1
+        self.locked_action = None
 
-    def get_action(self, state: State) -> Action:
-        t_idx = min(self.current_step, len(self.policy_n) - 1)
-        
-        idx_p = nearest_index_1d(self.p_grid, state.P_d)
-        idx_n = nearest_index_1d(self.n_vals, float(state.n_prev))
-        idx_soc = nearest_index_1d(self.soc_vals, state.soc)
-        idx_pfc = nearest_index_1d(self.pfc_vals, state.p_fc_prev)
-        
-        best_n_idx = self.policy_n[t_idx, idx_p, idx_n, idx_soc, idx_pfc]
-        n_opt = int(self.n_vals[best_n_idx])
-        
-        # --- BYPASS INTERPOLATION IF ON EXACT GRID ---
-        use_sg = getattr(self.config, 'use_smart_grid', False)
-        if self.is_macro and use_sg:
-            # Absolute extraction parity with FCLockedControl
-            p_batt_opt = float(self.policy_pbatt[t_idx, idx_p, idx_n, idx_soc, idx_pfc])
-        else:
-            # Smooth reality mapping for 1Hz data
-            slice_2d = self.policy_pbatt[t_idx, idx_p, idx_n, :, :] 
-            p_batt_opt = bilinear_interp_2d(self.soc_vals, self.pfc_vals, slice_2d, state.soc, state.p_fc_prev)
-        
-        p_fc_locked = state.P_d - p_batt_opt
+    def get_action(self, state: State, time_sec: float) -> Action:
 
-        if n_opt == 0:
-            p_fc_locked = 0.0
-        else:
-            p_fc_locked = max(0.0, p_fc_locked)
+        macro_idx = int(time_sec // self.config.Ts)
         
-        self.current_step += 1
-        return Action(n_modules=n_opt, p_batt=p_batt_opt, p_fc=p_fc_locked)
+        # ZERO-ORDER HOLD
+        if macro_idx > self.last_macro_idx:
+            self.last_macro_idx = macro_idx
+            t_idx = min(macro_idx, len(self.policy_n) - 1)
+
+            idx_p = nearest_index_1d(self.p_grid, state.P_d)
+            idx_n = nearest_index_1d(self.n_vals, float(state.n_prev))
+            idx_soc = nearest_index_1d(self.soc_vals, state.soc)
+            idx_pfc = nearest_index_1d(self.pfc_vals, state.p_fc_prev)
+            
+            best_n_idx = self.policy_n[t_idx, idx_p, idx_n, idx_soc, idx_pfc]
+            n_opt = int(self.n_vals[best_n_idx])
+            
+            use_sg = getattr(self.config, 'use_smart_grid', False)
+            if self.is_macro and use_sg:
+                p_batt_opt = float(self.policy_pbatt[t_idx, idx_p, idx_n, idx_soc, idx_pfc])
+            else:
+                slice_2d = self.policy_pbatt[t_idx, idx_p, idx_n, :, :] 
+                p_batt_opt = bilinear_interp_2d(self.soc_vals, self.pfc_vals, slice_2d, state.soc, state.p_fc_prev)
+            
+            p_fc_locked = state.P_d - p_batt_opt
+
+            if n_opt == 0:
+                p_fc_locked = 0.0
+            else:
+                p_fc_locked = max(0.0, p_fc_locked)
+            
+            # Lock the intent!
+            self.locked_action = Action(n_modules=n_opt, p_batt=p_batt_opt, p_fc=p_fc_locked)
+        
+        return self.locked_action
 
 @njit(cache=True)
 def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, pfc_prev: float, Ts: float, 
@@ -213,55 +234,71 @@ class AugmentedValueControl(ControlLaw):
         self.p_grid = p_grid
         self.transition_matrix = transition_matrix
         self.V = V_matrix
-        self.current_step = 0
         self.is_macro = is_macro
-
-    def get_action(self, state: State) -> Action:
-        t_idx = min(self.current_step, len(self.V) - 1)
         
-        if t_idx >= len(self.V) - 1:
-            V_next = np.zeros((len(self.p_grid), len(self.config.n_vals), len(self.config.soc_vals), len(self.config.pfc_vals)))
-        else:
-            V_next = self.V[t_idx + 1]
+        # --- ZOH CACHE VARIABLES ---
+        self.last_macro_idx = -1
+        self.locked_n = 0
+        self.locked_pfc = 0.0
 
-        if self.is_macro:
-            P_d_eval = self.p_grid[nearest_index_1d(self.p_grid, state.P_d)]
-            n_eval = int(self.config.n_vals[nearest_index_1d(self.config.n_vals, float(state.n_prev))])
-            soc_eval = self.config.soc_vals[nearest_index_1d(self.config.soc_vals, state.soc)]
-            pfc_eval = self.config.pfc_vals[nearest_index_1d(self.config.pfc_vals, state.p_fc_prev)]
-        else:
-            P_d_eval = state.P_d
-            n_eval = state.n_prev
-            soc_eval = state.soc
-            pfc_eval = state.p_fc_prev
+    def get_action(self, state: State, time_sec: float) -> Action:
 
-        idx_p = nearest_index_1d(self.p_grid, P_d_eval)
-        transition_row = self.transition_matrix[idx_p, :]
-
-        use_sg = getattr(self.config, 'use_smart_grid', False)
-        use_exact = use_sg and self.is_macro
-        dP = getattr(self.config, 'dP', 140.0)
-        dSoC = (dP * float(self.config.Ts)) / (float(self.config.Q_bat) * 3600.0) if use_sg else 0.0
-
-        best_n, best_pbatt = _run_augmented_1_step_lookahead(
-            P_d_real=P_d_eval, soc_real=soc_eval, n_prev=n_eval, pfc_prev=pfc_eval, Ts=float(self.config.Ts),
-            p_max=float(self.config.p_max), p_nom=float(self.config.p_nom), k_fc=float(self.config.k_fc),
-            k_h2=float(self.config.k_h2), S_max=float(self.config.S_max), tau_fc=float(self.config.tau_fc),
-            alpha_fc=float(self.config.alpha_fc), a0=float(self.config.a0), a1=float(self.config.a1),
-            a2=float(self.config.a2), Q_bat=float(self.config.Q_bat), C_rep=float(self.config.C_rep),
-            E_life=float(self.config.E_life), lambda_trans=float(self.config.lambda_trans),
-            soc_min=float(self.config.soc_min), soc_max=float(self.config.soc_max),
-            pb_vals=self.config.pb_vals, n_vals=self.config.n_vals, soc_vals=self.config.soc_vals, 
-            pfc_vals=self.config.pfc_vals, transition_row=transition_row, V_next=V_next,
-            use_exact=use_exact, dSoC=dSoC, dP=dP, is_macro=self.is_macro
-        )
-
-        p_fc_locked = P_d_eval - best_pbatt if self.is_macro else state.P_d - best_pbatt
-
-        if int(best_n) == 0:
-            p_fc_locked = 0.0
-        else:
-            p_fc_locked = max(0.0, p_fc_locked)
+        macro_idx = int(time_sec // self.config.Ts)
         
-        self.current_step += 1
-        return Action(n_modules=int(best_n), p_batt=best_pbatt, p_fc=p_fc_locked)
+        # 1. THE EMS (MACRO-STEP OPTIMIZATION)
+        if macro_idx > self.last_macro_idx:
+            self.last_macro_idx = macro_idx
+            t_idx = min(macro_idx, len(self.V) - 1)
+            
+            if t_idx >= len(self.V) - 1:
+                V_next = np.zeros((len(self.p_grid), len(self.config.n_vals), len(self.config.soc_vals), len(self.config.pfc_vals)))
+            else:
+                V_next = self.V[t_idx + 1]
+
+            if self.is_macro:
+                P_d_eval = self.p_grid[nearest_index_1d(self.p_grid, state.P_d)]
+                n_eval = int(self.config.n_vals[nearest_index_1d(self.config.n_vals, float(state.n_prev))])
+                soc_eval = self.config.soc_vals[nearest_index_1d(self.config.soc_vals, state.soc)]
+                pfc_eval = self.config.pfc_vals[nearest_index_1d(self.config.pfc_vals, state.p_fc_prev)]
+            else:
+                P_d_eval = state.P_d
+                n_eval = state.n_prev
+                soc_eval = state.soc
+                pfc_eval = state.p_fc_prev
+
+            idx_p = nearest_index_1d(self.p_grid, P_d_eval)
+            transition_row = self.transition_matrix[idx_p, :]
+
+            use_sg = getattr(self.config, 'use_smart_grid', False)
+            use_exact = use_sg and self.is_macro
+            dP = getattr(self.config, 'dP', 140.0)
+            dSoC = (dP * float(self.config.Ts)) / (float(self.config.Q_bat) * 3600.0) if use_sg else 0.0
+
+            best_n, best_pbatt = _run_augmented_1_step_lookahead(
+                P_d_real=P_d_eval, soc_real=soc_eval, n_prev=n_eval, pfc_prev=pfc_eval, Ts=float(self.config.Ts),
+                p_max=float(self.config.p_max), p_nom=float(self.config.p_nom), k_fc=float(self.config.k_fc),
+                k_h2=float(self.config.k_h2), S_max=float(self.config.S_max), tau_fc=float(self.config.tau_fc),
+                alpha_fc=float(self.config.alpha_fc), a0=float(self.config.a0), a1=float(self.config.a1),
+                a2=float(self.config.a2), Q_bat=float(self.config.Q_bat), C_rep=float(self.config.C_rep),
+                E_life=float(self.config.E_life), lambda_trans=float(self.config.lambda_trans),
+                soc_min=float(self.config.soc_min), soc_max=float(self.config.soc_max),
+                pb_vals=self.config.pb_vals, n_vals=self.config.n_vals, soc_vals=self.config.soc_vals, 
+                pfc_vals=self.config.pfc_vals, transition_row=transition_row, V_next=V_next,
+                use_exact=use_exact, dSoC=dSoC, dP=dP, is_macro=self.is_macro
+            )
+
+            # Determine Strategic Intent 
+            p_fc_intent = P_d_eval - best_pbatt if self.is_macro else state.P_d - best_pbatt
+            
+            # LOCK THE FUEL CELL INTENT
+            self.locked_n = int(best_n)
+            if self.locked_n == 0:
+                self.locked_pfc = 0.0
+            else:
+                self.locked_pfc = max(0.0, p_fc_intent)
+
+        # 2. THE PMS (MICRO-STEP TACTICAL EXECUTION)
+        # The Battery constantly calculates the remainder to absorb 1Hz noise
+        p_batt_dynamic = state.P_d - self.locked_pfc
+
+        return Action(n_modules=self.locked_n, p_batt=p_batt_dynamic, p_fc=self.locked_pfc)

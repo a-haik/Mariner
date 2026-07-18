@@ -22,17 +22,19 @@ class HybridFCLockedControl(ControlLaw):
     the discrete SDP grid, extracting a rigid fuel cell setpoint. The battery 
     absorbs the high-frequency physical turbulence.
     """
-    def __init__(self, p_grid: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray, 
+    def __init__(self, config: SimConfig, p_grid: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray, 
                  policy_n: np.ndarray, policy_pbatt: np.ndarray):
+        self.config = config
         self.p_grid = p_grid
         self.n_vals = n_vals
         self.soc_vals = soc_vals
         self.policy_n = policy_n
         self.policy_pbatt = policy_pbatt
-        self.current_step = 0
 
-    def get_action(self, state: State) -> Action:
-        t_idx = min(self.current_step, len(self.policy_n) - 1)
+    def get_action(self, state: State, time_sec: float) -> Action:
+
+        macro_idx = int(time_sec // self.config.Ts)
+        t_idx = min(macro_idx, len(self.V) - 1)
         
         # 1. Snap continuous sensors to discrete grid
         idx_p = nearest_index_1d(self.p_grid, state.P_d)
@@ -48,7 +50,6 @@ class HybridFCLockedControl(ControlLaw):
         discrete_p_d = self.p_grid[idx_p]
         p_fc_locked = discrete_p_d - p_batt_disc
         
-        self.current_step += 1
         return Action(n_modules=n_opt, p_batt=p_batt_disc, p_fc=p_fc_locked)
 
 class HybridPolicyControl(ControlLaw):
@@ -64,11 +65,12 @@ class HybridPolicyControl(ControlLaw):
         self.soc_vals = soc_vals
         self.policy_n = policy_n
         self.policy_pbatt = policy_pbatt
-        self.current_step = 0
         self.is_macro = is_macro
 
-    def get_action(self, state: State) -> Action:
-        t_idx = min(self.current_step, len(self.policy_n) - 1)
+    def get_action(self, state: State, time_sec: float) -> Action:
+
+        macro_idx = int(time_sec // self.config.Ts)
+        t_idx = min(macro_idx, len(self.V) - 1)
         
         # Modules are integers, so they must still be snapped
         idx_p = nearest_index_1d(self.p_grid, state.P_d)
@@ -87,7 +89,6 @@ class HybridPolicyControl(ControlLaw):
         
         p_fc_locked = state.P_d - p_batt_opt
         
-        self.current_step += 1
         return Action(n_modules=n_opt, p_batt=p_batt_opt, p_fc=p_fc_locked)
 
 @njit(cache=True)
@@ -178,11 +179,13 @@ class HybridValueControl(ControlLaw):
         self.p_grid = p_grid
         self.transition_matrix = transition_matrix
         self.V = V_matrix
-        self.current_step = 0
+
         self.is_macro = is_macro
 
-    def get_action(self, state: State) -> Action:
-        t_idx = min(self.current_step, len(self.V) - 1)
+    def get_action(self, state: State, time_sec: float) -> Action:
+
+        macro_idx = int(time_sec // self.config.Ts)
+        t_idx = min(macro_idx, len(self.V) - 1)
         
         if t_idx >= len(self.V) - 1:
             V_next = np.zeros((len(self.p_grid), len(self.config.n_vals), len(self.config.soc_vals)))
@@ -219,5 +222,4 @@ class HybridValueControl(ControlLaw):
 
         p_fc_locked = P_d_eval - best_pbatt if self.is_macro else state.P_d - best_pbatt
         
-        self.current_step += 1
         return Action(n_modules=int(best_n), p_batt=best_pbatt, p_fc=p_fc_locked)

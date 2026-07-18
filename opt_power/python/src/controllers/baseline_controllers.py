@@ -14,11 +14,11 @@ class BaselineSDPControl(ControlLaw):
         self.p_grid = p_grid
         self.n_vals = n_vals
         self.policy = policy_matrix
-        self.current_step = 0
 
-    def get_action(self, state: State) -> Action:
-        t_idx = min(self.current_step, len(self.policy) - 1)
-        
+    def get_action(self, state: State, time_sec: float) -> Action:
+        macro_idx = int(time_sec // self.config.Ts)
+        t_idx = min(macro_idx, len(self.policy) - 1)
+
         idx_p = nearest_index_1d(self.p_grid, state.P_d)
         idx_n = nearest_index_1d(self.n_vals, float(state.n_prev))
         
@@ -29,7 +29,6 @@ class BaselineSDPControl(ControlLaw):
         discrete_p_d = self.p_grid[idx_p]
         p_fc_locked = discrete_p_d
         
-        self.current_step += 1
         return Action(n_modules=n_action, p_batt=0.0, p_fc=p_fc_locked)
 
 class BaselineThresholdControl(ControlLaw):
@@ -40,9 +39,9 @@ class BaselineThresholdControl(ControlLaw):
         self.config = config
         self.T = horizon_length
         self.sigma = sigma
-        self.current_step = 0
 
-    def get_action(self, state: State) -> Action:
+    def get_action(self, state: State, time_sec: float) -> Action:
+
         x = state.P_d / self.config.p_nom - state.n_prev
         t_rem = max(1.0, float(self.T - self.current_step - 1))
         k_s = self.config.k_fc / self.config.S_max
@@ -60,7 +59,6 @@ class BaselineThresholdControl(ControlLaw):
         # FC targets the exact macro-demand block it sees
         p_fc_locked = state.P_d 
         
-        self.current_step += 1
         return Action(n_modules=n_action, p_batt=0.0, p_fc=p_fc_locked)
 
 class BaselineConstantControl(ControlLaw):
@@ -70,6 +68,6 @@ class BaselineConstantControl(ControlLaw):
     def __init__(self, config: SimConfig):
         self.n_constant = config.n0
 
-    def get_action(self, state: State) -> Action:
+    def get_action(self, state: State, time_sec: float) -> Action:
         # FC targets the exact macro-demand block it sees
         return Action(n_modules=self.n_constant, p_batt=0.0, p_fc=state.P_d)

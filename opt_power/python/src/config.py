@@ -21,14 +21,14 @@ class SimConfig:
     # =========================================================================
     # 2. FUEL CELL PHYSICAL PARAMETERS
     # =========================================================================
-    # p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
-    # p_nom: float = 80.0        # Nominal optimal load per PEMFC module [kW]
+    p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
+    p_nom: float = 80.0        # Nominal optimal load per PEMFC module [kW]
 
     # p_max: float = 400.0       # Absolute ceiling power per PEMFC module [kW]
     # p_nom: float = 160.0        # Nominal optimal load per PEMFC module [kW]
 
-    p_max: float = 800.0       # Absolute ceiling power per PEMFC module [kW]
-    p_nom: float = 320.0        # Nominal optimal load per PEMFC module [kW]
+    # p_max: float = 800.0       # Absolute ceiling power per PEMFC module [kW]
+    # p_nom: float = 320.0        # Nominal optimal load per PEMFC module [kW]
 
     n0: int = 0                # Initial number of active fuel cell modules
     nT: int = 0               # Target number of active modules at the end of the voyage
@@ -53,9 +53,9 @@ class SimConfig:
     # Values to reach 60% eff at 40kW and 55% eff at 80kW
 
     # Individual 200kW modules
-    # a0: float = 8.68055556e-02    # [g/s]
-    # a1: float = 9.54861111e-03     # [g/(s*kW)]
-    # a2: float = 5.42534722e-05    # [g/(s*kW^2)]
+    a0: float = 8.68055556e-02    # [g/s]
+    a1: float = 9.54861111e-03     # [g/(s*kW)]
+    a2: float = 5.42534722e-05    # [g/(s*kW^2)]
 
     # Packs of 2 modules 
     # a0: float = 1.73611111e-01    # [g/s]
@@ -63,9 +63,9 @@ class SimConfig:
     # a2: float = 2.71267361e-05    # [g/(s*kW^2)]
 
     # Packs of 4 modules 
-    a0: float = 3.47222222e-01    # [g/s]
-    a1: float = 9.54861111e-03    # [g/(s*kW)]
-    a2: float = 1.35633681e-05    # [g/(s*kW^2)]
+    # a0: float = 3.47222222e-01    # [g/s]
+    # a1: float = 9.54861111e-03    # [g/(s*kW)]
+    # a2: float = 1.35633681e-05    # [g/(s*kW^2)]
 
     # Packs of 5 modules 
     # a0: float = 4.34027778e-01    # [g/s]
@@ -90,7 +90,7 @@ class SimConfig:
     # =========================================================================
     # 4. SIMULATION BOUNDARY CONDITIONS (Terminal Penalties)
     # =========================================================================
-    apply_terminal_n_cost: bool = False   # Force FCs to shut down at time T (incurs final switching cost)
+    apply_terminal_n_cost: bool = True  # Force FCs to shut down at time T (incurs final switching cost)
     apply_terminal_soc_cost: bool = True  # Apply symmetrical penalty/reward for final SoC deviation from soc_initial
     
     # =========================================================================
@@ -99,15 +99,15 @@ class SimConfig:
 
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
 
-    N_Pd: int = 21         # Number of discrete load levels (Power demand Grid)
-    N_n: int = 4          # Number of fuel cell modules on board
+    N_Pd: int = 6         # Number of discrete load levels (Power demand Grid)
+    N_n: int = 16          # Number of fuel cell modules on board
 
     N_soc: int = 25       # Grid resolution for SoC dimension (SoC Grid)
     N_pb: int = 15        # Grid resolution for P_batt dimension (P_batt grid)
     N_pfc: int = 20                    # Grid resolution for previous P_fc dimension
 
     use_smart_grid: bool = True
-    dP: float = 50.0
+    dP: float = 200.0
     verbose: bool = True
 
     # Derived fields (populated automatically in __post_init__)
