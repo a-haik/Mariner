@@ -37,7 +37,7 @@ class AugmentedFCLockedControl(ControlLaw):
 
     def get_action(self, state: State, time_sec: float) -> Action:
         
-        macro_idx = int(time_sec // self.config.Ts)
+        macro_idx = int(time_sec // self.config.Dt)
         
         # ZERO-ORDER HOLD: Only evaluate at the start of a new 300s macro-step!
         if macro_idx > self.last_macro_idx:
@@ -93,7 +93,7 @@ class AugmentedPolicyControl(ControlLaw):
 
     def get_action(self, state: State, time_sec: float) -> Action:
 
-        macro_idx = int(time_sec // self.config.Ts)
+        macro_idx = int(time_sec // self.config.Dt)
         
         # ZERO-ORDER HOLD
         if macro_idx > self.last_macro_idx:
@@ -128,7 +128,7 @@ class AugmentedPolicyControl(ControlLaw):
         return self.locked_action
 
 @njit(cache=True)
-def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, pfc_prev: float, Ts: float, 
+def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, pfc_prev: float, Dt: float, 
                                     p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                                     tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
                                     Q_bat: float, C_rep: float, E_life: float, lambda_trans: float, 
@@ -169,7 +169,7 @@ def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: in
                 epsilon = 1e-5
 
                 # Kinematics
-                soc_next = soc_real - (pbatt * (Ts / 3600.0)) / Q_bat
+                soc_next = soc_real - (pbatt * (Dt / 3600.0)) / Q_bat
                 if soc_next < soc_min - epsilon or soc_next > soc_max + epsilon:
                     continue
 
@@ -184,9 +184,9 @@ def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: in
                     continue
 
                 # Centralized Cost Engine
-                c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+                c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Dt)
                 c_s = calc_cost_switching(n_curr, n_prev, k_fc, S_max)
-                c_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
+                c_bat = calc_cost_battery(pbatt, Dt, C_rep, E_life)
                 c_trans = calc_cost_transient(n_curr, n_prev, p_fc_curr, pfc_prev, lambda_trans)
 
                 # 2D Interpolation over expected future surface
@@ -208,12 +208,12 @@ def _run_augmented_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: in
 
         else:
             # CONTINUOUS OPTIMIZER LOGIC
-            pb_min, pb_max = calculate_continuous_bounds(P_d_real, soc_real, n_curr, Ts, p_max, Q_bat, soc_min, soc_max, pb_min_config, pb_max_config)
+            pb_min, pb_max = calculate_continuous_bounds(P_d_real, soc_real, n_curr, Dt, p_max, Q_bat, soc_min, soc_max, pb_min_config, pb_max_config)
             
             if pb_min > pb_max + 1e-5:
                 continue
                 
-            opt_pb, total_cost = gss_augmented(pb_min, pb_max, 1.0, P_d_real, soc_real, n_curr, n_prev, pfc_prev, Ts, 
+            opt_pb, total_cost = gss_augmented(pb_min, pb_max, 1.0, P_d_real, soc_real, n_curr, n_prev, pfc_prev, Dt, 
                                                p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, 
                                                Q_bat, C_rep, E_life, lambda_trans, soc_vals, pfc_vals, exp_v[a_idx, :, :])
             if total_cost < best_cost:
@@ -243,7 +243,7 @@ class AugmentedValueControl(ControlLaw):
 
     def get_action(self, state: State, time_sec: float) -> Action:
 
-        macro_idx = int(time_sec // self.config.Ts)
+        macro_idx = int(time_sec // self.config.Dt)
         
         # 1. THE EMS (MACRO-STEP OPTIMIZATION)
         if macro_idx > self.last_macro_idx:
@@ -272,10 +272,10 @@ class AugmentedValueControl(ControlLaw):
             use_sg = getattr(self.config, 'use_smart_grid', False)
             use_exact = use_sg and self.is_macro
             dP = getattr(self.config, 'dP', 140.0)
-            dSoC = (dP * float(self.config.Ts)) / (float(self.config.Q_bat) * 3600.0) if use_sg else 0.0
+            dSoC = (dP * float(self.config.Dt)) / (float(self.config.Q_bat) * 3600.0) if use_sg else 0.0
 
             best_n, best_pbatt = _run_augmented_1_step_lookahead(
-                P_d_real=P_d_eval, soc_real=soc_eval, n_prev=n_eval, pfc_prev=pfc_eval, Ts=float(self.config.Ts),
+                P_d_real=P_d_eval, soc_real=soc_eval, n_prev=n_eval, pfc_prev=pfc_eval, Dt=float(self.config.Dt),
                 p_max=float(self.config.p_max), p_nom=float(self.config.p_nom), k_fc=float(self.config.k_fc),
                 k_h2=float(self.config.k_h2), S_max=float(self.config.S_max), tau_fc=float(self.config.tau_fc),
                 alpha_fc=float(self.config.alpha_fc), a0=float(self.config.a0), a1=float(self.config.a1),

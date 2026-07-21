@@ -13,7 +13,7 @@ from src.utils.math_utils import (
 
 @njit(cache=True)
 def _solve_augmented_baseline_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, pfc_vals: np.ndarray,
-                                      transition_matrix: np.ndarray, Ts: float, p_max: float, p_nom: float, 
+                                      transition_matrix: np.ndarray, Dt: float, p_max: float, p_nom: float, 
                                       k_fc: float, k_h2: float, S_max: float, tau_fc: float, alpha_fc: float, 
                                       a0: float, a1: float, a2: float, lambda_trans: float, 
                                       nT: int, apply_terminal_n_cost: bool,
@@ -81,7 +81,7 @@ def _solve_augmented_baseline_bellman(T: int, p_vals: np.ndarray, n_vals: np.nda
                             continue # Can't draw power if all modules are off
                             
                         # Centralized Cost Engine Calculations
-                        c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+                        c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Dt)
                         c_s = calc_cost_switching(n_curr, n_prev, k_fc, S_max)
                         c_trans = calc_cost_transient(n_curr, n_prev, p_fc_curr, pfc_prev, lambda_trans)
                         
@@ -118,7 +118,7 @@ class AugmentedBaselineSDPSolver:
             n_vals=self.config.n_vals,
             pfc_vals=self.config.pfc_vals,
             transition_matrix=self.mc_model['P'],
-            Ts=float(self.config.Ts),
+            Dt=float(self.config.Dt),
             p_max=float(self.config.p_max),
             p_nom=float(self.config.p_nom),
             k_fc=float(self.config.k_fc),

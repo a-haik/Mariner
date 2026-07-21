@@ -14,7 +14,7 @@ from src.utils.math_utils import (
 
 @njit(cache=True)
 def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
-                          pb_vals: np.ndarray, transition_matrix: np.ndarray, Ts: float, 
+                          pb_vals: np.ndarray, transition_matrix: np.ndarray, Dt: float, 
                           p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                           tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
                           Q_bat: float, C_rep: float, E_life: float, 
@@ -112,7 +112,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                                 p_fc = 0.0 # Clamp
                             
                             # 2. State Kinematics
-                            soc_next = soc_val - (pbatt * (Ts / 3600.0)) / Q_bat
+                            soc_next = soc_val - (pbatt * (Dt / 3600.0)) / Q_bat
                             
                             if soc_next < soc_min:
                                 penalty += (soc_min - soc_next) * 1e7
@@ -122,9 +122,9 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                                 soc_next = soc_max 
                                 
                             # 3. Instantaneous Cost Calculations
-                            C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+                            C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Dt)
                             C_s = calc_cost_switching(n_next, n_val, k_fc, S_max)
-                            C_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
+                            C_bat = calc_cost_battery(pbatt, Dt, C_rep, E_life)
                             
                             # 4. Interpolate Expected Future Cost 
                             if use_smart_grid:
@@ -161,7 +161,7 @@ class HybridSDPSolver:
             policy_pbatt: (T, P_size, n_size, soc_size) array of optimal battery power [kW].
             V: (T, P_size, n_size, soc_size) array of expected cumulative costs.
         """
-        dSoC = (self.config.dP * self.config.Ts) / (self.config.Q_bat * 3600.0) if bool(self.config.use_smart_grid) else 0.0
+        dSoC = (self.config.dP * self.config.Dt) / (self.config.Q_bat * 3600.0) if bool(self.config.use_smart_grid) else 0.0
         return _solve_hybrid_bellman(
             T=horizon_length,
             p_vals=self.mc_model['levels'],
@@ -169,7 +169,7 @@ class HybridSDPSolver:
             soc_vals=self.config.soc_vals,
             pb_vals=self.config.pb_vals,
             transition_matrix=self.mc_model['P'],
-            Ts=float(self.config.Ts),
+            Dt=float(self.config.Dt),
             p_max=float(self.config.p_max),
             p_nom=float(self.config.p_nom),
             k_fc=float(self.config.k_fc),

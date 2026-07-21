@@ -33,7 +33,7 @@ class HybridFCLockedControl(ControlLaw):
 
     def get_action(self, state: State, time_sec: float) -> Action:
 
-        macro_idx = int(time_sec // self.config.Ts)
+        macro_idx = int(time_sec // self.config.Dt)
         t_idx = min(macro_idx, len(self.V) - 1)
         
         # 1. Snap continuous sensors to discrete grid
@@ -69,7 +69,7 @@ class HybridPolicyControl(ControlLaw):
 
     def get_action(self, state: State, time_sec: float) -> Action:
 
-        macro_idx = int(time_sec // self.config.Ts)
+        macro_idx = int(time_sec // self.config.Dt)
         t_idx = min(macro_idx, len(self.V) - 1)
         
         # Modules are integers, so they must still be snapped
@@ -92,7 +92,7 @@ class HybridPolicyControl(ControlLaw):
         return Action(n_modules=n_opt, p_batt=p_batt_opt, p_fc=p_fc_locked)
 
 @njit(cache=True)
-def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: float, 
+def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Dt: float, 
                           p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                           tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
                           Q_bat: float, C_rep: float, E_life: float, soc_min: float, soc_max: float,
@@ -126,7 +126,7 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
             # ORIGINAL DISCRETE LOGIC
             for pbatt in pb_vals:
                 epsilon = 1e-5
-                soc_next = soc_real - (pbatt * (Ts / 3600.0)) / Q_bat
+                soc_next = soc_real - (pbatt * (Dt / 3600.0)) / Q_bat
                 p_fc = P_d_real - pbatt
                 
                 if p_fc < -epsilon:
@@ -136,9 +136,9 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
                 if n_next == 0 and p_fc > epsilon:
                     continue
 
-                C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+                C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Dt)
                 C_s = calc_cost_switching(n_next, n_prev, k_fc, S_max)
-                C_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
+                C_bat = calc_cost_battery(pbatt, Dt, C_rep, E_life)
 
                 if use_exact:
                     s_idx = get_exact_index_1d(soc_next, soc_min, dSoC, soc_size - 1)
@@ -153,12 +153,12 @@ def _run_1_step_lookahead(P_d_real: float, soc_real: float, n_prev: int, Ts: flo
                     best_pbatt = pbatt
         else:
             # CONTINUOUS OPTIMIZER LOGIC
-            pb_min, pb_max = calculate_continuous_bounds(P_d_real, soc_real, n_next, Ts, p_max, Q_bat, soc_min, soc_max, pb_min_config, pb_max_config)
+            pb_min, pb_max = calculate_continuous_bounds(P_d_real, soc_real, n_next, Dt, p_max, Q_bat, soc_min, soc_max, pb_min_config, pb_max_config)
             
             if pb_min > pb_max + 1e-5:
                 continue # Bounds are physically impossible
                 
-            opt_pb, total_cost = gss_standard(pb_min, pb_max, 1.0, P_d_real, soc_real, n_next, n_prev, Ts, 
+            opt_pb, total_cost = gss_standard(pb_min, pb_max, 1.0, P_d_real, soc_real, n_next, n_prev, Dt, 
                                               p_max, p_nom, k_fc, k_h2, S_max, tau_fc, alpha_fc, a0, a1, a2, 
                                               Q_bat, C_rep, E_life, soc_vals, exp_v[a_idx, :])
             if total_cost < best_cost:
@@ -184,7 +184,7 @@ class HybridValueControl(ControlLaw):
 
     def get_action(self, state: State, time_sec: float) -> Action:
 
-        macro_idx = int(time_sec // self.config.Ts)
+        macro_idx = int(time_sec // self.config.Dt)
         t_idx = min(macro_idx, len(self.V) - 1)
         
         if t_idx >= len(self.V) - 1:
@@ -207,10 +207,10 @@ class HybridValueControl(ControlLaw):
         use_sg = getattr(self.config, 'use_smart_grid', False)
         use_exact = use_sg and self.is_macro
         dP = getattr(self.config, 'dP', 140.0)
-        dSoC = (dP * float(self.config.Ts)) / (float(self.config.Q_bat) * 3600.0) if use_sg else 0.0
+        dSoC = (dP * float(self.config.Dt)) / (float(self.config.Q_bat) * 3600.0) if use_sg else 0.0
 
         best_n, best_pbatt = _run_1_step_lookahead(
-            P_d_real=P_d_eval, soc_real=soc_eval, n_prev=n_eval, Ts=float(self.config.Ts),
+            P_d_real=P_d_eval, soc_real=soc_eval, n_prev=n_eval, Dt=float(self.config.Dt),
             p_max=float(self.config.p_max), p_nom=float(self.config.p_nom), k_fc=float(self.config.k_fc),
             k_h2=float(self.config.k_h2), S_max=float(self.config.S_max), tau_fc=float(self.config.tau_fc),
             alpha_fc=float(self.config.alpha_fc), a0=float(self.config.a0), a1=float(self.config.a1),

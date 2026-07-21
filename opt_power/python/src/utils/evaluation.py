@@ -74,7 +74,7 @@ class VoyageBenchmarker:
             t_concat = np.concatenate(train_t)
             pd_concat = np.concatenate(train_pd)
             
-            ds_train = downsample_block_mean(t_concat, pd_concat, self.config.Ts, align='t0')
+            ds_train = downsample_block_mean(t_concat, pd_concat, self.config.Dt, align='t0')
             
             # Start Markov Timer
             start_t = time.perf_counter()
@@ -116,7 +116,7 @@ class VoyageBenchmarker:
                 
             mc_time = time.perf_counter() - start_t
             
-            mc_model['Delta'] = self.config.Ts  
+            mc_model['Delta'] = self.config.Dt  
             self.vault.save_markov_model(markov_hash, mc_model, train_days, offline_time=mc_time)
             
         total_offline_time += mc_time
@@ -155,7 +155,7 @@ class VoyageBenchmarker:
             levels = mc_model['levels']
             from src.utils.math_utils import nearest_index_1d
             test_pd = np.array([levels[nearest_index_1d(levels, val)] for val in test_pd_macro])
-            dt_override = float(self.config.Ts)
+            dt_override = float(self.config.Dt)
         else:
             test_pd = test_pd_micro
             dt_override = None
@@ -183,7 +183,7 @@ class VoyageBenchmarker:
 
     def compare_approaches(self, approaches: dict, train_days: list, test_day: int) -> BenchmarkReport:
         test_data = self.fleet_cache[test_day]
-        ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Ts, align='t0')
+        ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Dt, align='t0')
         horizon = len(ds_test['Pd'])
         
         results, telemetry_dict = {}, {}
@@ -210,7 +210,7 @@ class VoyageBenchmarker:
             train_days = [d for d in self.valid_days if d != test_day]
             
             test_data = self.fleet_cache[test_day]
-            ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Ts, align='t0')
+            ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Dt, align='t0')
             horizon = len(ds_test['Pd'])
             
             run_id = f"Day {test_day}"
@@ -237,7 +237,7 @@ class VoyageBenchmarker:
             test_day = self.valid_days[i]
             
             test_data = self.fleet_cache[test_day]
-            ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Ts, align='t0')
+            ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Dt, align='t0')
             horizon = len(ds_test['Pd'])
             
             run_id = f"Train {train_days[-1]} -> Test {test_day}"

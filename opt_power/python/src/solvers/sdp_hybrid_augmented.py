@@ -16,7 +16,7 @@ from src.utils.math_utils import (
 @njit(cache=True)
 def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
                              pfc_vals: np.ndarray, pb_vals: np.ndarray, transition_matrix: np.ndarray, 
-                             Ts: float, p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
+                             Dt: float, p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                              tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
                              Q_bat: float, C_rep: float, E_life: float, lambda_trans: float,
                              soc_min: float, soc_max: float, nT: int, apply_terminal_n_cost: bool,
@@ -112,7 +112,7 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                                     p_fc_curr = 0.0 # Clamp
                                 
                                 # 2. State Kinematics (Project SoC with Slack Math)
-                                soc_curr = soc_prev - (pbatt * (Ts / 3600.0)) / Q_bat
+                                soc_curr = soc_prev - (pbatt * (Dt / 3600.0)) / Q_bat
                                 
                                 if soc_curr < soc_min:
                                     penalty += (soc_min - soc_curr) * 1e7
@@ -122,9 +122,9 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                                     soc_curr = soc_max # Clamp
                                     
                                 # 3. Centralized Cost Engine Calculations
-                                c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Ts)
+                                c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Dt)
                                 c_s = calc_cost_switching(n_curr, n_prev, k_fc, S_max)
-                                c_bat = calc_cost_battery(pbatt, Ts, C_rep, E_life)
+                                c_bat = calc_cost_battery(pbatt, Dt, C_rep, E_life)
                                 c_trans = calc_cost_transient(n_curr, n_prev, p_fc_curr, pfc_prev, lambda_trans)
                                 
                                 # 4. Expected Future Cost 
@@ -159,7 +159,7 @@ class AugmentedHybridSDPSolver:
 
     def compute_solution(self, horizon_length: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         
-        dSoC = (self.config.dP * self.config.Ts) / (self.config.Q_bat * 3600.0) if self.config.use_smart_grid else 0.0
+        dSoC = (self.config.dP * self.config.Dt) / (self.config.Q_bat * 3600.0) if self.config.use_smart_grid else 0.0
 
         return _solve_augmented_bellman(
             T=horizon_length,
@@ -169,7 +169,7 @@ class AugmentedHybridSDPSolver:
             pfc_vals=self.config.pfc_vals,
             pb_vals=self.config.pb_vals,
             transition_matrix=self.mc_model['P'],
-            Ts=float(self.config.Ts),
+            Dt=float(self.config.Dt),
             p_max=float(self.config.p_max),
             p_nom=float(self.config.p_nom),
             k_fc=float(self.config.k_fc),

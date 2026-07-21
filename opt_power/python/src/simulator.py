@@ -15,7 +15,7 @@ class Simulator:
         self.plant = plant
         
         # If dt_override is provided, use it; otherwise default to the 1Hz physics step
-        self.dt = dt_override if dt_override is not None else float(self.config.dt_sim)
+        self.dt = dt_override if dt_override is not None else float(self.config.dt)
         self.history = {}
 
     def run(self, controller) -> float:

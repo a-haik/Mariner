@@ -41,7 +41,7 @@ def main():
     P_d_continuous = raw_validation_data['Pd']
     
     # We downsample strictly to determine the backward induction horizon length for the offline solver
-    ds_validation = downsample_block_mean(raw_validation_data['t'], P_d_continuous, config.Ts, align='t0')
+    ds_validation = downsample_block_mean(raw_validation_data['t'], P_d_continuous, config.Dt, align='t0')
     horizon_length = len(ds_validation['Pd'])
     
     # NOTE: You can easily swap this out for `HybridPlant(config)` when you're ready

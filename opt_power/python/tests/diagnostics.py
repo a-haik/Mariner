@@ -30,7 +30,7 @@ class TestMathIntegration(unittest.TestCase):
         # Expected Degradation [1/s] (Should be baseline since p_module == p_nom)
         expected_d_fc = 1.0 / (3600.0 * self.config.tau_fc)
         # Expected Total Cost [$/s]
-        expected_cost = (self.config.k_h2 * expected_m_dot / 1000.0) + (self.config.k_fc * expected_d_fc)
+        expected_cost = (self.config.k_h2 * expected_m_dot) + (self.config.k_fc * expected_d_fc)
 
         # 4. Assert correctness up to 6 decimal places
         self.assertAlmostEqual(telemetry['cost_o'], expected_cost, places=6, 

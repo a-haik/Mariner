@@ -15,20 +15,14 @@ class SimConfig:
     # =========================================================================
     # 1. TIME DOMAINS & DISCRETIZATION
     # =========================================================================
-    dt_sim: int = 1            # High-frequency physical simulation step [s]
-    Ts: int = 300              # Macro-control decision interval / block-mean window [s]
+    dt: int = 1            # High-frequency physical simulation step [s]
+    Dt: int = 300              # Macro-control decision interval / block-mean window [s]
     
     # =========================================================================
     # 2. FUEL CELL PHYSICAL PARAMETERS
     # =========================================================================
     p_max: float = 200.0       # Absolute ceiling power per PEMFC module [kW]
     p_nom: float = 80.0        # Nominal optimal load per PEMFC module [kW]
-
-    # p_max: float = 400.0       # Absolute ceiling power per PEMFC module [kW]
-    # p_nom: float = 160.0        # Nominal optimal load per PEMFC module [kW]
-
-    # p_max: float = 800.0       # Absolute ceiling power per PEMFC module [kW]
-    # p_nom: float = 320.0        # Nominal optimal load per PEMFC module [kW]
 
     n0: int = 0                # Initial number of active fuel cell modules
     nT: int = 0               # Target number of active modules at the end of the voyage
@@ -53,24 +47,9 @@ class SimConfig:
     # Values to reach 60% eff at 40kW and 55% eff at 80kW
 
     # Individual 200kW modules
-    a0: float = 8.68055556e-02    # [g/s]
-    a1: float = 9.54861111e-03     # [g/(s*kW)]
-    a2: float = 5.42534722e-05    # [g/(s*kW^2)]
-
-    # Packs of 2 modules 
-    # a0: float = 1.73611111e-01    # [g/s]
-    # a1: float = 9.54861111e-03    # [g/(s*kW)]
-    # a2: float = 2.71267361e-05    # [g/(s*kW^2)]
-
-    # Packs of 4 modules 
-    # a0: float = 3.47222222e-01    # [g/s]
-    # a1: float = 9.54861111e-03    # [g/(s*kW)]
-    # a2: float = 1.35633681e-05    # [g/(s*kW^2)]
-
-    # Packs of 5 modules 
-    # a0: float = 4.34027778e-01    # [g/s]
-    # a1: float = 9.54861111e-03     # [g/(s*kW)]
-    # a2: float = 1.08506944e-05    # [g/(s*kW^2)]
+    a0: float =1.01010101e-04    # [g/s]
+    a1: float =8.83838384e-06    # [g/(s*kW)]
+    a2: float =6.31313131e-08    # [g/(s*kW^2)]
 
     # =========================================================================
     # 3. BATTERY PHYSICAL PARAMETERS (Hybrid Additions)
@@ -100,7 +79,8 @@ class SimConfig:
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
 
     N_Pd: int = 6         # Number of discrete load levels (Power demand Grid)
-    N_n: int = 16          # Number of fuel cell modules on board
+    N_n: int = 16         # Number of fuel cell modules on board
+    n_pack: int = 1       # Number of fuel cell modules in a pack
 
     N_soc: int = 25       # Grid resolution for SoC dimension (SoC Grid)
     N_pb: int = 15        # Grid resolution for P_batt dimension (P_batt grid)
@@ -125,7 +105,7 @@ class SimConfig:
         object.__setattr__(self, 'S_max', self.v_drop_max / self.delta_vswitch)
 
         # --- GRID GENERATION ---
-        object.__setattr__(self, 'n_vals', np.arange(0, self.N_n+1, dtype=np.int32))
+        object.__setattr__(self, 'n_vals', np.arange(0, self.N_n+1, 2, dtype=np.int32))
         max_fc_power = self.N_n * self.p_max
 
         if self.use_smart_grid:
@@ -140,7 +120,7 @@ class SimConfig:
             object.__setattr__(self, 'N_pfc', len(pfc_grid))
             
             # 3. Congruent SoC Grid (Lattice Phasing: Anchored to soc_initial)
-            dSoC = (self.dP * self.Ts) / (self.Q_bat * 3600.0)
+            dSoC = (self.dP * self.Dt) / (self.Q_bat * 3600.0)
             
             # Build bidirectional arrays outwards from the initial state
             upper_grid = np.arange(self.soc_initial, self.soc_max + 1e-6, dSoC)
@@ -180,8 +160,8 @@ class SimConfig:
         if self.alpha_mc < 0:
             raise ValueError("Dirichlet smoothing coefficient alpha_mc cannot be negative.")
             
-        if self.Ts % self.dt_sim != 0:
-            raise ValueError("Macro time step Ts must be a perfect multiple of dt_sim.")
+        if not (self.Dt / self.dt).is_integer():
+            raise ValueError("Macro time step Dt must be a perfect multiple of dt.")
             
         if not (0.0 <= self.soc_min < self.soc_max <= 1.0):
             raise ValueError("Invalid battery SoC boundary definitions.")
@@ -204,11 +184,11 @@ class SimConfig:
         A_nodes = N_n_len * self.N_pb
         
         # O(Comp) = T * |S| * (|N_d| + |A|)
-        transitions = self.Ts * S_nodes * (N_Pd + A_nodes)
+        transitions = self.Dt * S_nodes * (N_Pd + A_nodes)
         
         # Est memory: 4D Value (float64=8), Policy N (int32=4), Policy Pbatt (float64=8) per time step
         bytes_per_state = 20
-        memory_mb = ((self.Ts + 1) * S_nodes * bytes_per_state) / (1024 * 1024)
+        memory_mb = ((self.Dt + 1) * S_nodes * bytes_per_state) / (1024 * 1024)
         
         print("\n" + "="*55)
         print(f"⚙️  EMS Configuration Loaded | Smart Grid: {'ON' if self.use_smart_grid else 'OFF'}")
