@@ -28,14 +28,14 @@ class SimConfig:
     nT: int = 0               # Target number of active modules at the end of the voyage
     
     # Degradation & Cost Coefficients
-    tau_fc: float = 50000.0    # Expected service life at steady nominal operation [Hours]
+    tau_fc: float = 80000.0    # Expected service life at steady nominal operation [Hours]
     # S_max: float = 4000.0      # Maximum start/stop cycles before failure
     c_fc: float = 960          # FC module replacement cost [$/kW]
     k_h2: float = 4.0          # Hydrogen fuel cost [$/kg]
-    alpha_fc: float = 1.0      # Degradation penalty factor for off-nominal loads
+    alpha_fc: float = 4.0      # Degradation penalty factor for off-nominal loads
     delta_vswitch: float = 0.98e-6 # Switching voltage drop [V]
     delta_vlc: float = 1.79e-6 # Load-change voltage drop rate [V/kW]
-    v_drop_max: float = 0.07   # Max permitted voltage drop (10% of nominal voltage)
+    v_drop_max: float = 0.07   # Max permitted voltage drop (10% of 0.7 V nominal voltage) [V]
     
     # Hydrogen Consumption Curve Coefficients (m_dot_H2 = a0 + a1*p + a2*p^2)
 
@@ -69,7 +69,7 @@ class SimConfig:
     # =========================================================================
     # 4. SIMULATION BOUNDARY CONDITIONS (Terminal Penalties)
     # =========================================================================
-    apply_terminal_n_cost: bool = True  # Force FCs to shut down at time T (incurs final switching cost)
+    apply_terminal_n_cost: bool = False  # Force FCs to shut down at time T (incurs final switching cost)
     apply_terminal_soc_cost: bool = True  # Apply symmetrical penalty/reward for final SoC deviation from soc_initial
     
     # =========================================================================
@@ -79,12 +79,12 @@ class SimConfig:
     alpha_mc: float = 0.5      # Dirichlet smoothing parameter for sparse transitions
 
     N_Pd: int = 6         # Number of discrete load levels (Power demand Grid)
-    N_n: int = 16         # Number of fuel cell modules on board
+    N_n: int = 12         # Number of fuel cell modules on board
     n_pack: int = 1       # Number of fuel cell modules in a pack
 
     N_soc: int = 25       # Grid resolution for SoC dimension (SoC Grid)
     N_pb: int = 15        # Grid resolution for P_batt dimension (P_batt grid)
-    N_pfc: int = 20                    # Grid resolution for previous P_fc dimension
+    N_pfc: int = 20       # Grid resolution for previous P_fc dimension
 
     use_smart_grid: bool = True
     dP: float = 200.0
@@ -105,7 +105,7 @@ class SimConfig:
         object.__setattr__(self, 'S_max', self.v_drop_max / self.delta_vswitch)
 
         # --- GRID GENERATION ---
-        object.__setattr__(self, 'n_vals', np.arange(0, self.N_n+1, 2, dtype=np.int32))
+        object.__setattr__(self, 'n_vals', np.arange(0, self.N_n+1, self.n_pack, dtype=np.int32))
         max_fc_power = self.N_n * self.p_max
 
         if self.use_smart_grid:
@@ -174,33 +174,41 @@ class SimConfig:
         
 
     def _print_complexity_diagnostics(self, N_Pd):
-        """Prints the Big-O complexity for the Augmented Hybrid solver upon initialization."""
-        N_n_len = len(self.n_vals)
-        
-        # O(S) = N_d * N_n * N_soc * N_pfc
-        S_nodes = N_Pd * N_n_len * self.N_soc * self.N_pfc
-        
-        # O(A) = N_n * N_bat
-        A_nodes = N_n_len * self.N_pb
-        
-        # O(Comp) = T * |S| * (|N_d| + |A|)
-        transitions = self.Dt * S_nodes * (N_Pd + A_nodes)
-        
-        # Est memory: 4D Value (float64=8), Policy N (int32=4), Policy Pbatt (float64=8) per time step
-        bytes_per_state = 20
-        memory_mb = ((self.Dt + 1) * S_nodes * bytes_per_state) / (1024 * 1024)
-        
-        print("\n" + "="*55)
-        print(f"⚙️  EMS Configuration Loaded | Smart Grid: {'ON' if self.use_smart_grid else 'OFF'}")
-        print("="*55)
-        if self.use_smart_grid:
-            print(f" -> dP Step Size       : {self.dP} kW")
-        print(f" -> Grid Dimensions    : N_d={N_Pd}, N_n={N_n_len}, N_soc={self.N_soc}, N_fc={self.N_pfc}, N_bat={self.N_pb}")
-        print(f" -> Augmented Space |S|: {S_nodes:,} states")
-        print(f" -> Action Space |A|   : {A_nodes:,} actions")
-        print(f" -> Est. Big-O Comput. : O({transitions:,}) operations")
-        print(f" -> Est. RAM Footprint : ~{memory_mb:.2f} MB")
-        print("="*55 + "\n")
+            """Prints the Big-O complexity for the Augmented Hybrid solver upon initialization."""
+            N_n_len = len(self.n_vals)
+            
+            # Calculate actual number of macro-steps in a 24-hour horizon
+            seconds_in_day = 86400
+            T_steps = int(seconds_in_day / self.Dt)
+            
+            # O(S) = N_d * N_n * N_soc * N_pfc
+            S_nodes = N_Pd * N_n_len * self.N_soc * self.N_pfc
+            
+            # O(A) = N_n * N_bat
+            A_nodes = N_n_len * self.N_pb
+            
+            # O(Comp) = T * |S| * (|N_d| + |A|)
+            transitions = T_steps * S_nodes * (N_Pd + A_nodes)
+            
+            # Est memory: 4D Value (float64=8), Policy N (int32=4), Policy Pbatt (float64=8) per time step
+            bytes_per_state = 20
+            memory_mb = ((T_steps + 1) * S_nodes * bytes_per_state) / (1024 * 1024)
+            
+            print("\n" + "="*55)
+            print(f"⚙️  EMS Configuration Loaded | Smart Grid: {'ON' if self.use_smart_grid else 'OFF'}")
+            print("="*55)
+            if self.use_smart_grid:
+                print(f" -> dP Step Size       : {self.dP} kW")
+            if self.n_pack != 1:
+                print(f" -> Module packs size  : {self.n_pack} modules")
+
+            print(f" -> Grid Dimensions    : N_d={N_Pd}, N_n={N_n_len}, N_soc={self.N_soc}, N_fc={self.N_pfc}, N_bat={self.N_pb}")
+            print(f" -> Augmented Space |S|: {S_nodes:,} states")
+            print(f" -> Action Space |A|   : {A_nodes:,} actions")
+            print(f" -> Time steps   : {T_steps,} steps/day")
+            print(f" -> Est. Big-O Comput. : O({transitions:,.0f}) operations / day")
+            print(f" -> Est. RAM Footprint : ~{memory_mb:.2f} MB")
+            print("="*55 + "\n")
 
 # =========================================================================
 # THE NEW ENVIRONMENT CONFIG (Paths & Directories Only)
@@ -219,6 +227,9 @@ class EnvConfig:
     data_dir: str = field(init=False)
     vault_dir: str = field(init=False)
     cache_dir: str = field(init=False)
+
+    # Power demand scaling factor for anonimous data
+    power_scale_factor: float = 0.75
 
     def __post_init__(self):
         # Anchor the base directory to the 'python/' folder (one level up from src/)

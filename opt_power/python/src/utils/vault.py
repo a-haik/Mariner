@@ -3,7 +3,6 @@ import os
 import json
 import hashlib
 import numpy as np
-from dataclasses import asdict
 
 class ModelVault:
     """
@@ -37,15 +36,26 @@ class ModelVault:
         Tracks NumPy array shapes so grid resolution changes trigger recomputes.
         """
         primitives = {}
-        config_dict = asdict(config) if hasattr(config, '__dataclass_fields__') else config.__dict__
+        config_dict = {}
         
-        # We no longer need to exclude paths because SimConfig only holds physics!
+        # 1. Catch formally defined dataclass fields
+        if hasattr(config, '__dataclass_fields__'):
+            import dataclasses
+            config_dict.update(dataclasses.asdict(config))
+            
+        # 2. Catch dynamically assigned attributes from __post_init__
+        if hasattr(config, '__dict__'):
+            config_dict.update(config.__dict__)
+            
         for k, v in config_dict.items():
             if isinstance(v, (int, float, str, bool)):
                 primitives[k] = v
-            # Safely hash array shapes so grid resolution changes trigger a recompute
+            elif isinstance(v, np.number): # CRITICAL: Catch numpy scalars (np.int64, etc.)
+                primitives[k] = v.item()   # Convert to native python type
             elif isinstance(v, np.ndarray):
-                primitives[f"{k}_shape"] = v.shape
+                primitives[f"{k}_shape"] = list(v.shape) # Hash the physical shape of the grid
+            elif isinstance(v, list):
+                primitives[f"{k}_len"] = len(v)
                 
         return primitives
 

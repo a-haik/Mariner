@@ -61,9 +61,10 @@ class VoyageBenchmarker:
         loaded_mc = self.vault.load_markov_model(markov_hash)
         
         if loaded_mc is not None:
+            print(f" [Vault] Cache HIT: Markov Chain succesfully loaded for days {train_days}")
             mc_model, mc_time = loaded_mc
         else:
-            print(f" [Vault] Cache MISS: Training Markov Chain for days {train_days}...")
+            print(f" [Vault] Cache MISS: Training Markov Chain for days {train_days}")
             train_t, train_pd = [], []
             for d in train_days:
                 data = self.fleet_cache[d]
@@ -128,9 +129,10 @@ class VoyageBenchmarker:
             loaded_sdp = self.vault.load_sdp_model(sdp_hash)
             
             if loaded_sdp is not None:
+                print(f" [Vault] Cache HIT: SDP solution succesfully loaded ({solver_cls.__name__})")
                 raw_solution, sdp_time = loaded_sdp
             else:
-                print(f" [Vault] Cache MISS: Solving SDP Bellman matrices ({solver_cls.__name__})...")
+                print(f" [Vault] Cache MISS: Solving SDP({solver_cls.__name__})")
                 solver = solver_cls(self.config, mc_model)
                 
                 # Start Bellman Timer
