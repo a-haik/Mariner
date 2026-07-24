@@ -1,10 +1,9 @@
-# python/src/plants/augmented_hybrid_plant.py
 from typing import Tuple, Dict
 from src.config import SimConfig
 from src.core import State, Action
 from src.plants.base import BasePlant
 from src.utils.math_utils import (
-    calc_cost_operational, 
+    calc_cost_operational_breakdown, 
     calc_cost_switching, 
     calc_cost_battery, 
     calc_cost_transient
@@ -38,8 +37,8 @@ class AugmentedHybridPlant(BasePlant):
         # 3. Fail-safe Override: FC MUST absorb the remainder to prevent a blackout
         p_fc_actual = state.P_d - p_batt_real
 
-        # 4. Centralized Cost Engine Calculations
-        c_o_fc = calc_cost_operational(
+        # 4. Centralized Cost Engine Calculations (Dissociated FC Costs)
+        c_h2, c_fc_deg = calc_cost_operational_breakdown(
             n_active=n_active, p_fc=p_fc_actual, p_nom=self.config.p_nom, 
             tau_fc=self.config.tau_fc, alpha_fc=self.config.alpha_fc, 
             k_fc=self.config.k_fc, k_h2=self.config.k_h2, 
@@ -80,11 +79,12 @@ class AugmentedHybridPlant(BasePlant):
             'p_batt_actual': p_batt_real,
             'soc': soc_next,
             'n_active': n_active,
-            'cost_o': c_o_fc,
+            'cost_h2': c_h2,
+            'cost_fc_deg': c_fc_deg,
             'cost_bat': c_bat,
             'cost_s': c_s,
             'cost_tr': c_trans,
-            'cost_total': c_o_fc + c_bat + c_s + c_trans
+            'cost_total': c_h2 + c_fc_deg + c_bat + c_s + c_trans
         }
         
         return next_state, telemetry

@@ -32,7 +32,7 @@ class SimConfig:
     # S_max: float = 4000.0      # Maximum start/stop cycles before failure
     c_fc: float = 960          # FC module replacement cost [$/kW]
     k_h2: float = 4.0          # Hydrogen fuel cost [$/kg]
-    alpha_fc: float = 4.0      # Degradation penalty factor for off-nominal loads
+    alpha_fc: float = 4      # Degradation penalty factor for off-nominal loads
     delta_vswitch: float = 0.98e-6 # Switching voltage drop [V]
     delta_vlc: float = 1.79e-6 # Load-change voltage drop rate [V/kW]
     v_drop_max: float = 0.07   # Max permitted voltage drop (10% of 0.7 V nominal voltage) [V]
@@ -205,7 +205,7 @@ class SimConfig:
             print(f" -> Grid Dimensions    : N_d={N_Pd}, N_n={N_n_len}, N_soc={self.N_soc}, N_fc={self.N_pfc}, N_bat={self.N_pb}")
             print(f" -> Augmented Space |S|: {S_nodes:,} states")
             print(f" -> Action Space |A|   : {A_nodes:,} actions")
-            print(f" -> Time steps   : {T_steps,} steps/day")
+            print(f" -> Time steps   : {T_steps:,} steps/day")
             print(f" -> Est. Big-O Comput. : O({transitions:,.0f}) operations / day")
             print(f" -> Est. RAM Footprint : ~{memory_mb:.2f} MB")
             print("="*55 + "\n")

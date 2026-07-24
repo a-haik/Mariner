@@ -3,7 +3,6 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
 
 def _get_unique_filepath(base_filepath: str) -> str:
     """
@@ -208,271 +207,249 @@ def plot_markov_matrix(mc_model: dict, title: str = "Markov Transition Matrix", 
             plt.savefig(f'figures/{safe_title}.png', dpi=300)
         plt.show()
 
-def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0), mc_model=None, title: str = "Simulation Dashboard", indiv: bool = False, save_plot: bool = False):
+plt.rcParams.update({
+    'font.family': 'sans-serif',
+    'font.sans-serif': ['Helvetica', 'Arial', 'DejaVu Sans'],
+    'font.size': 8,
+    'axes.labelsize': 8,
+    'axes.titlesize': 8,
+    'xtick.labelsize': 7,
+    'ytick.labelsize': 7,
+    'legend.fontsize': 7,
+    'figure.titlesize': 9,
+    'lines.linewidth': 1.0,
+    'grid.linewidth': 0.5,
+    'grid.alpha': 0.4
+})
+
+def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0), 
+                             mc_model=None, title: str = "Simulation Dashboard", 
+                             indiv: bool = False, save_plot: bool = False):
     """
-    Dynamically generates a comprehensive dashboard of a single simulation run.
-    Now supports Phase 3 terminal boundary condition visualization.
+    Publication-ready dashboard for Elsevier cas-dc (Applied Energy standard).
+    - indiv=False: Full 2-column figure (width = 16.6 cm / ~6.54 in)
+    - indiv=True : Single-column figure (width = 8.0 cm / ~3.15 in)
     """
-    t_hours = df['time'] / 3600.0  
+    t_hours = df['time'] / 3600.0
     p_module = np.where(df['n_active'] > 0, df['p_fc_actual'] / df['n_active'], 0.0)
     
-    t_hours_jump = t_hours.tolist()
-    cum_cost_o = df['cost_o'].cumsum().tolist()
-    cum_cost_s = df['cost_s'].cumsum().tolist()
-    cum_cost_total = df['cost_total'].cumsum().tolist()
-    
-    # Check for battery
+    # Flags
+    has_split_fc = 'cost_h2' in df.columns and 'cost_fc_deg' in df.columns
     has_battery = 'p_batt_actual' in df.columns and 'soc' in df.columns
-    if has_battery:
-        cum_cost_bat = df['cost_bat'].cumsum().tolist()
-
-    # Check for transient costs
     has_transient = 'cost_tr' in df.columns
-    if has_transient:
-        cum_cost_tr = df['cost_tr'].cumsum().tolist()
 
-    # --- APPLY TERMINAL JUMP (t = T) ---
+    # Terminal costs
     term_n_cost, term_soc_cost = terminal_costs
-    if term_n_cost != 0.0 or term_soc_cost != 0.0:
-        # Duplicate the final time coordinate to create a sharp vertical line
-        t_hours_jump.append(t_hours_jump[-1])
-        
-        cum_cost_o.append(cum_cost_o[-1]) # Operating cost doesn't jump
-        cum_cost_s.append(cum_cost_s[-1] + term_n_cost)
-        
-        if has_battery:
-            cum_cost_bat.append(cum_cost_bat[-1] + term_soc_cost)
-            
-        if has_transient:
-            cum_cost_tr.append(cum_cost_tr[-1]) # Transient cost doesn't jump
-            
-        cum_cost_total.append(cum_cost_total[-1] + term_n_cost + term_soc_cost)
 
-    # 2. Setup Figure Layout
-    fig = None
-    ax_pwr, ax_mod, ax_cost, ax_bat, ax_mc = None, None, None, None, None
+    # --- COST BREAKDOWN CALCULATION (FOR COST SUBPLOT) ---
+    # Total accumulated costs over 24h including boundary conditions
+    cost_data = {}
+    if has_split_fc:
+        cost_data['Fuel'] = df['cost_h2'].sum()
+        cost_data['Steady Wear'] = df['cost_fc_deg'].sum()
+    else:
+        cost_data['FC Oper.'] = df['cost_o'].sum()
+
+    cost_data['Switching'] = df['cost_s'].sum() + term_n_cost
     
-    if not indiv:
-        if mc_model is None:
-            # Standard 2x2 Grid Layout
-            fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-            fig.suptitle(title, fontsize=16, fontweight='bold')
-            ax_pwr = axes[0, 0]
-            ax_mod = axes[0, 1]
-            ax_cost = axes[1, 0]
-            
-            ax_bat = axes[1, 1]
-            if not has_battery:
-                ax_bat.set_visible(False) # Hide if testing FC-Only Plant
-                
-        else:
-            # Asymmetric 5-Plot GridSpec Layout
-            fig = plt.figure(figsize=(16, 14))
-            gs = GridSpec(3, 2, figure=fig)
-            fig.suptitle(f"{title} (with Markov Analytics)", fontsize=16, fontweight='bold')
-            
-            # Row 0 spans both columns [0, :]
-            ax_mod = fig.add_subplot(gs[0, :])   
-            
-            # Rows 1 & 2 populate the bottom 2x2 space
-            ax_pwr = fig.add_subplot(gs[1, 0])
-            ax_cost = fig.add_subplot(gs[1, 1])
-            if has_battery:
-                ax_bat = fig.add_subplot(gs[2, 0])
-            ax_mc = fig.add_subplot(gs[2, 1])
+    if has_battery:
+        cost_data['Battery'] = df['cost_bat'].sum() + term_soc_cost
+    if has_transient:
+        cost_data['Load Change'] = df['cost_tr'].sum()
 
+    # Dimensions (Inches: 1 cm = 0.3937 in)
+    # Reduced vertical height slightly for better page economy in Elsevier papers
+    if indiv:
+        figsize = (3.15, 2.3)
+    else:
+        figsize = (6.54, 4.5)
+
+    if not indiv:
+        fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=False)
+        ax_pwr = axes[0, 0]
+        ax_mod = axes[0, 1]
+        ax_bat = axes[1, 0]   # Switched: Battery is now (c)
+        ax_cost = axes[1, 1]  # Switched: Costs are now (d)
+        if not has_battery:
+            ax_bat.set_visible(False)
+    
     def get_ax(target_ax):
-        """Yields a new figure if indiv=True, otherwise yields the GridSpec target."""
         if indiv:
-            temp_fig, ax = plt.subplots(figsize=(10, 4))
+            temp_fig, ax = plt.subplots(figsize=figsize)
             return temp_fig, ax
         return fig, target_ax
 
+    time_ticks = np.arange(0, 25, 4)
+
     # =========================================================
-    # --- PANE 1: Power Split ---
+    # --- PANE 1 (a): Power Split ---
     # =========================================================
     current_fig, ax1 = get_ax(ax_pwr)
-    ax1.plot(t_hours, df['P_d'], label='Raw Demand (P_d)', color='black', alpha=0.3, linewidth=2)
-    ax1.plot(t_hours, df['p_fc_actual'], label='Fuel Cell Power', color='royalblue', linewidth=1.5)
+    ax1.plot(t_hours, df['P_d'], label='Power Demand', color='#333333', alpha=0.35, linewidth=0.9)
+    ax1.plot(t_hours, df['p_fc_actual'], label='FC Power', color='#1f77b4', linewidth=1.2)
     
     ax1.set_ylabel("Power [kW]")
-    if indiv:
-        ax1.set_title(f"{title} - Power Split")
-    else:
-         ax1.set_title("Demand vs Fuel Cell Production", fontweight='bold')
+    ax1.set_xlim([0, 24])
+    ax1.set_xticks(time_ticks)
+    ax1.grid(True, linestyle='--')
+    ax1.legend(loc='upper right', frameon=True, framealpha=0.8)
     
-    ax1.legend(loc='upper right')
-    ax1.grid(True, linestyle='--', alpha=0.6)
+    # Subfigure label
+    ax1.text(0.02, 0.92, "(a)", transform=ax1.transAxes, fontweight='bold', fontsize=9)
     if indiv:
+        ax1.set_xlabel("Time [h]")
+        plt.tight_layout()
+        if save_plot:
+            plt.savefig(f'figures/{title}_pane_a.pdf', dpi=300)
         plt.show()
 
     # =========================================================
-    # --- PANE 2: Module Kinematics ---
+    # --- PANE 2 (b): Module Kinematics ---
     # =========================================================
     current_fig, ax2 = get_ax(ax_mod)
-    color_n = 'teal'
-    ax2.step(t_hours, df['n_active'], label='Active Modules (n)', color=color_n, linewidth=2, where='post')
-    ax2.set_ylabel("Module Count", color=color_n)
+    color_n = '#d62728'  # Red/Teal accent
+    color_p = '#1f77b4'  # Blue accent
+
+    ax2.step(t_hours, df['n_active'], label='Active Modules Count', color=color_n, linewidth=0.9, alpha=0.7, where='post')
+    ax2.set_ylabel("Active Modules $n$ [-]", color=color_n)
     ax2.tick_params(axis='y', labelcolor=color_n)
+    ax2.set_xlim([0, 24])
+    ax2.set_xticks(time_ticks)
     
     ax2_twin = ax2.twinx()
-    color_p = 'purple'
-    ax2_twin.plot(t_hours, p_module, label='Power per Module', color=color_p, linewidth=1.5, alpha=0.6)
-    ax2_twin.set_ylabel("Power / Module [kW]", color=color_p)
+    ax2_twin.plot(t_hours, p_module, label='Individual Module Power', color=color_p, linewidth=1.2, alpha=1)
+    ax2_twin.set_ylabel("Individual Module Power [kW]", color=color_p)
     ax2_twin.tick_params(axis='y', labelcolor=color_p)
     
-    if indiv:
-        ax2.set_title(f"{title} - Kinematics")
-    else:
-        ax2.set_title("Module Activation & Power Distribution", fontweight='bold')
+    ax2.grid(True, linestyle='--')
+    ax2.text(0.02, 0.92, "(b)", transform=ax2.transAxes, fontweight='bold', fontsize=9)
     
-    ax2.grid(True, linestyle='--', alpha=0.6)
     if indiv:
+        ax2.set_xlabel("Time [h]")
+        plt.tight_layout()
+        if save_plot:
+            plt.savefig(f'figures/{title}_pane_b.pdf', dpi=300)
         plt.show()
 
     # =========================================================
-    # --- PANE 3: Cumulative Economics ---
-    # =========================================================
-    current_fig, ax3 = get_ax(ax_cost)
-    
-    # Use t_hours_jump and our new appended lists
-    ax3.plot(t_hours_jump, cum_cost_total, label='Total Cost', color='black', linewidth=2.5)
-    ax3.plot(t_hours_jump, cum_cost_o, label='Operating Cost (FC)', color='royalblue', linestyle='--')
-    ax3.plot(t_hours_jump, cum_cost_s, label='Switching Cost', color='crimson', linestyle='--')
-    
-    if has_battery:
-        ax3.plot(t_hours_jump, cum_cost_bat, label='Battery Degradation', color='darkorange', linestyle='--')
-
-    # Add the transient cost plot
-    if has_transient:
-        ax3.plot(t_hours_jump, cum_cost_tr, label='Transient Cost', color='mediumorchid', linestyle='--')
-        
-    ax3.set_ylabel("Cumulative Cost [$]")
-    ax3.set_yscale('symlog', linthresh=1.0)
-    
-    if indiv:
-        ax3.set_title(f"{title} - Economics")
-    else:
-        ax3.set_title("Cumulative Costs Evolution", fontweight='bold')
-    
-    ax3.legend(loc='upper left')
-    ax3.grid(True, linestyle='--', alpha=0.6)
-    if indiv:
-        plt.show()
-
-    # =========================================================
-    # --- PANE 4: Battery Health & Power (Hybrid Only) ---
+    # --- PANE 3 (c): Battery Utilization & SOC (SWITCHED TO C) ---
     # =========================================================
     if has_battery and (ax_bat is not None or indiv):
         current_fig, ax4 = get_ax(ax_bat)
 
-        # Left Axis: State of Charge (SoC)
-        ax4.plot(t_hours, df['soc'] * 100, label='State of Charge', color='black', linewidth=2)
-        ax4.set_ylabel("SoC [%]")
-        ax4.set_ylim([0, 100])
-        # 1. Dynamically fetch safety limits from config (defaults fallback to 20% / 80%)
+        # Config Limits
         soc_min = getattr(config, 'soc_min', 0.2) * 100
         soc_max = getattr(config, 'soc_max', 0.8) * 100
         soc_init = getattr(config, 'soc_initial', 0.5) * 100
+
+        # --- RIGHT AXIS: Battery Power Fill ---
+        ax4_twin = ax4.twinx()
+        p_max = df['p_batt_actual'].abs().max()
+        limit_p = max(p_max * 1.1, 1.0)
         
-        # Plot safety boundary lines
-        ax4.axhline(soc_max, color='black', linewidth=1, linestyle='--', alpha=0.7)
-        ax4.axhline(soc_min, color='black', linewidth=1, linestyle='--', alpha=0.7)
+        # Align twin y-axis proportionally around soc_init
+        soc_fraction = max(0.1, min(0.9, soc_init / 100.0)) 
+        total_span = max(limit_p / (1 - soc_fraction), limit_p / soc_fraction)
+        ax4_twin.set_ylim([-total_span * soc_fraction, total_span * (1 - soc_fraction)])
+
+        # Single Fill for Battery Power
+        ax4_twin.fill_between(
+            t_hours, 0, df['p_batt_actual'], 
+            color='#2ca02c', alpha=0.5, 
+            edgecolor='none', linewidth=0.0,
+            label='Battery Power', zorder=3, interpolate=False
+        )
+        ax4_twin.set_ylabel("Battery Power [kW]", color='#2ca02c')
+        ax4_twin.tick_params(axis='y', labelcolor='#2ca02c')
+
+        # --- LEFT AXIS: SOC Curve & Safety Boundaries ---
+        ax4.plot(t_hours, df['soc'] * 100, label='SOC', color='black', linewidth=1.2, zorder=5)
+        ax4.set_ylabel("State Of Charge [%]")
+        ax4.set_ylim([0, 100])
+        ax4.set_xlim([0, 24])
+        ax4.set_xticks(time_ticks)
         
-        # 2. Handle Initial and Target SoC Guidelines dynamically
+        # Safety Limit Lines (Dotted)
+        ax4.axhline(soc_max, color='black', linewidth=0.8, linestyle=':', alpha=0.6, zorder=4)
+        ax4.axhline(soc_min, color='black', linewidth=0.8, linestyle=':', alpha=0.6, zorder=4)
+        
+        # SOC Target / Initial Guidelines
         if hasattr(config, 'soc_target'):
             soc_tgt = config.soc_target * 100
-            
-            # Check if initial and target are practically identical (using tolerance for floats)
-            if abs(soc_tgt - soc_init) < 1e-3:
-                ax4.axhline(soc_tgt, color='blue', linewidth=1.5, linestyle='-.', 
-                            label=f'Initial & Target SoC ({int(soc_tgt)}%)')
-            else:
-                ax4.axhline(soc_init, color='gray', linewidth=1.5, linestyle=':', 
-                            label=f'Initial SoC ({int(soc_init)}%)')
-                ax4.axhline(soc_tgt, color='blue', linewidth=1.5, linestyle='-.', 
-                            label=f'Target SoC ({int(soc_tgt)}%)')
-        else:
-            # Fallback if no target exists but we still want to show where it started
-            ax4.axhline(soc_init, color='gray', linewidth=1.5, linestyle=':', 
-                        label=f'Initial SoC ({int(soc_init)}%)')
-        
-# Right Axis: Battery Power Area Plot
-        ax4_twin = ax4.twinx()
-        ax4_twin.plot(t_hours, df['p_batt_actual'], color='gray', linewidth=0.5, alpha=0.5)
+            ax4.axhline(soc_tgt, color='k', linewidth=0.9, linestyle='--', alpha=0.75, zorder=4, label=r"SOC_0")
 
-        p_max = df['p_batt_actual'].abs().max()
-        limit_p = max(p_max * 1.1, 1.0) # Graceful fallback if battery is unused (max=0)
+        # Formatting & Layer Hierarchy
+        ax4.set_zorder(ax4_twin.get_zorder() + 1)
+        ax4.patch.set_visible(False)
+        ax4.grid(True, linestyle='--', alpha=0.5, zorder=1)
         
-        # 1. Find where soc_init sits proportionally on the left axis (0 to 100 scale)
-        soc_fraction = soc_init / 100.0
-        
-        # Clamp the fraction slightly so the power plot doesn't disappear 
-        # off-screen if soc_init happens to be exactly 0% or 100%
-        soc_fraction = max(0.1, min(0.9, soc_fraction)) 
-        
-        # 2. Calculate the total required span for the right y-axis.
-        # We check both the positive and negative required sides to ensure no clipping.
-        total_span = max(limit_p / (1 - soc_fraction), limit_p / soc_fraction)
-        
-        # 3. Set the asymmetric limits
-        ax4_twin.set_ylim([-total_span * soc_fraction, total_span * (1 - soc_fraction)])
-        # ----------------------------------------
-        
-        # Fill positive/negative
-        ax4_twin.fill_between(t_hours, 0, df['p_batt_actual'], 
-                         where=(df['p_batt_actual'] > 0), 
-                         color='red', alpha=0.2, label='Discharging', interpolate=True)
-                         
-        ax4_twin.fill_between(t_hours, 0, df['p_batt_actual'], 
-                         where=(df['p_batt_actual'] < 0), 
-                         color='green', alpha=0.2, label='Charging', interpolate=True)
-        
-        ax4_twin.set_ylabel("Battery Power [kW]")
-        
+        # Labelled (c) now
+        ax4.text(0.02, 0.92, "(c)", transform=ax4.transAxes, fontweight='bold', fontsize=9)
+
+        # # Clean Consolidated Legend
+        # lines_1, labels_1 = ax4.get_legend_handles_labels()
+        # lines_2, labels_2 = ax4_twin.get_legend_handles_labels()
+        # by_label = dict(zip(labels_1 + labels_2, lines_1 + lines_2)) 
+        # ax4.legend(by_label.values(), by_label.keys(), loc='upper right', 
+        #            frameon=True, framealpha=0.85, edgecolor='none')
+
         if indiv:
-            ax4.set_title(f"{title} - Battery State")
-        else:
-            ax4.set_title("Battery Utilization & State of Charge", fontweight='bold')
-        
-        # Legend combiner
-        lines_1, labels_1 = ax4.get_legend_handles_labels()
-        lines_2, labels_2 = ax4_twin.get_legend_handles_labels()
-        by_label = dict(zip(labels_1 + labels_2, lines_1 + lines_2)) 
-        ax4.legend(by_label.values(), by_label.keys(), loc='upper right')
-        
-        ax4.grid(True, linestyle='--', alpha=0.6)
-        if indiv:
+            ax4.set_xlabel("Time [h]")
+            plt.tight_layout()
+            if save_plot:
+                plt.savefig(f'figures/{title}_pane_c.pdf', dpi=300)
             plt.show()
 
     # =========================================================
-    # --- PANE 5: Markov Transition Matrix ---
+    # --- PANE 4 (d): Cost Breakdown (SWITCHED TO D) ---
     # =========================================================
-    if mc_model is not None:
-        if indiv:
-            plot_markov_matrix(mc_model, title=f"{title} - Markov Matrix")
-        else:
-            plot_markov_matrix(mc_model, title="Trained Markov Transition Probabilities", ax=ax_mc)
+    current_fig, ax3 = get_ax(ax_cost)
+    
+    categories = list(cost_data.keys())
+    values = list(cost_data.values())
+    colors = ['#1f77b4', '#2ca02c', '#d62728', '#ff7f0e', '#9467bd'][:len(categories)]
+    
+    bars = ax3.bar(categories, values, color=colors, edgecolor='black', linewidth=0.6, width=0.55)
+    ax3.set_ylabel("Final Cost [$]")
+    
+    # Scientific handling for scale differences: Symlog scale
+    ax3.set_yscale('symlog', linthresh=10.0)
+    ax3.set_ylim([0, max(values) * 10])
+    ax3.grid(True, which='both', linestyle='--', axis='y')
+    
+    # Annotate values above bars
+    for bar in bars:
+        height = bar.get_height()
+        ax3.annotate(f'${height:.1f}',
+                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, 3),
+                    textcoords="offset points",
+                    ha='center', va='bottom', fontsize=6.5, rotation=0)
+
+    # Labelled (d) now
+    ax3.text(0.02, 0.92, "(d)", transform=ax3.transAxes, fontweight='bold', fontsize=9)
+    if indiv:
+        plt.tight_layout()
+        if save_plot:
+            plt.savefig(f'figures/{title}_pane_d.pdf', dpi=300)
+        plt.show()
 
     # =========================================================
-    # 3. Final Formatting (for Dashboard view)
+    # --- FINAL FORMATTING (2-COLUMN VIEW) ---
     # =========================================================
     if not indiv:
-        # Add X-labels only to the bottom-most plots to keep it clean
-        if mc_model is None:
-            ax_cost.set_xlabel("Time [Hours]")
-            if has_battery:
-                ax_bat.set_xlabel("Time [Hours]")
-        else:
-            if has_battery:
-                ax_bat.set_xlabel("Time [Hours]")
-            # ax_mc label is handled inherently by plot_markov_matrix
-            
-        plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+        # Bottom X-Labels
+        ax_bat.set_xlabel("Time [h]")
+        ax_cost.set_xlabel("Cost Category")
+        ax_pwr.set_xlabel("Time [h]")
+        ax_cost.tick_params(axis='x', rotation=15)
+        
+        plt.tight_layout(pad=0.4)
         
         if save_plot:
             os.makedirs('figures', exist_ok=True)
             safe_title = title.replace(" ", "_").lower()
-            plt.savefig(f'figures/{safe_title}_dashboard.png', dpi=300)
+            plt.savefig(f'figures/{safe_title}_cas_dc.pdf', dpi=300, bbox_inches='tight')
+            plt.savefig(f'figures/{safe_title}_cas_dc.png', dpi=300, bbox_inches='tight')
         
         plt.show()

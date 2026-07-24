@@ -167,10 +167,11 @@ class VoyageBenchmarker:
         sim_results = sim.run(controller)
         calc_time = time.perf_counter() - start_time
         
-        # Include offline_time in the final dictionary!
+        # Separated H2 Fuel Cost and FC Degradation Cost metrics
         metrics = {
             'Total Cost [$]': sim_results['total_cost'],
-            'Operating Cost [$]': sum(sim.history.get('cost_o', [0.0])),
+            'H2 Fuel Cost [$]': sum(sim.history.get('cost_h2', [0.0])),
+            'FC Degradation Cost [$]': sum(sim.history.get('cost_fc_deg', [0.0])),
             'Switching Cost [$]': sum(sim.history.get('cost_s', [0.0])),
             'Battery Cost [$]': sum(sim.history.get('cost_bat', [0.0])),
             'Transient Cost [$]': sum(sim.history.get('cost_tr', [0.0])), 

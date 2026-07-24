@@ -147,23 +147,29 @@ def bilinear_interp_2d(x_vals: np.ndarray, y_vals: np.ndarray, z_matrix: np.ndar
     return f_xy
 
 @njit(cache=True)
-def calc_cost_operational(n_active: int, p_fc: float, p_nom: float, tau_fc: float, 
-                          alpha_fc: float, k_fc: float, k_h2: float, 
-                          a0: float, a1: float, a2: float, dt: float) -> float:
-    """Calculates continuous H2 consumption and baseline electrochemical degradation."""
-    
-    if p_fc < 1e-5:
-        p_fc = 0.0
-        
-    if n_active <= 0:
-        return 0.0
+def calc_cost_operational_breakdown(n_active: int, p_fc: float, p_nom: float, tau_fc: float, 
+                                     alpha_fc: float, k_fc: float, k_h2: float, 
+                                     a0: float, a1: float, a2: float, dt: float):
+    """Calculates distinct H2 consumption cost and baseline electrochemical degradation cost."""
+    if p_fc < 1e-5 or n_active <= 0:
+        return 0.0, 0.0
         
     p_module = p_fc / n_active
     m_dot_h2 = a0 + a1 * p_module + a2 * (p_module ** 2)
     d_fc = (1.0 / (3600.0 * tau_fc)) * (1.0 + alpha_fc * ((p_module - p_nom) ** 2) / (p_nom ** 2))
-    c_o_rate = (k_h2 * m_dot_h2) + (k_fc * d_fc)
     
-    return n_active * c_o_rate * dt
+    c_h2 = n_active * (k_h2 * m_dot_h2) * dt
+    c_fc_deg = n_active * (k_fc * d_fc) * dt
+    
+    return c_h2, c_fc_deg
+
+@njit(cache=True)
+def calc_cost_operational(n_active: int, p_fc: float, p_nom: float, tau_fc: float, 
+                          alpha_fc: float, k_fc: float, k_h2: float, 
+                          a0: float, a1: float, a2: float, dt: float) -> float:
+    """Calculates total continuous operational cost (H2 + FC wear)."""
+    c_h2, c_fc_deg = calc_cost_operational_breakdown(n_active, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, dt)
+    return c_h2 + c_fc_deg
 
 @njit(cache=True)
 def calc_cost_switching(n_active: int, n_prev: int, k_fc: float, S_max: float) -> float:
