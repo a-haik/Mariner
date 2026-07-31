@@ -509,7 +509,7 @@ def plot_simulation_dashboard_bis(df: pd.DataFrame, config, title: str = "Simula
     sat_intervals = []
     sat_mid_times = []
     sat_mid_socs = []
-    color_sat_marker = '#d97706'  # Muted crimson for marker
+    color_sat_marker = '#d62728'  # Muted crimson for marker
     color_sat_shade = '#888888'   # Clean neutral gray for shading
 
     # Minimum gap threshold between saturation events to trigger a merge (15 min = 0.25 h)
@@ -617,7 +617,7 @@ def plot_simulation_dashboard_bis(df: pd.DataFrame, config, title: str = "Simula
 
         ax3_twin.fill_between(
             t_hours, 0, df['p_batt_actual'], 
-            color=color_b, alpha=0.75, 
+            color=color_b, alpha=0.5, 
             edgecolor='none', linewidth=0.0,
             label='Battery Power', zorder=3, interpolate=False
         )
@@ -645,7 +645,7 @@ def plot_simulation_dashboard_bis(df: pd.DataFrame, config, title: str = "Simula
                 edgecolor='black', label='SOC Saturation'
             )
 
-        ax3.legend(loc='upper right', frameon=True, framealpha=0.9)
+        ax3.legend(loc='lower right', frameon=True, framealpha=0.9)
 
         ax3.set_zorder(ax3_twin.get_zorder() + 1)
         ax3.patch.set_visible(False)
