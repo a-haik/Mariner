@@ -92,8 +92,8 @@ def plot_dashboard(sim, approach_name: str, test_day: int, layout: str = 'grid',
         axes[3].set_ylabel("SoC [%]", color=c_soc, fontweight='bold')
         
         # Let the SoC scale naturally to show deficit
-        min_soc, max_soc = np.min(sim.soc_history), np.max(sim.soc_history)
-        axes[3].set_ylim(min(0, min_soc * 1.1), max(100, max_soc * 1.1))
+        miN_s, max_soc = np.min(sim.soc_history), np.max(sim.soc_history)
+        axes[3].set_ylim(min(0, miN_s * 1.1), max(100, max_soc * 1.1))
         
         axes[3].grid(True, linestyle=':', alpha=0.5, zorder=1)
         axes[3].patch.set_visible(False) 

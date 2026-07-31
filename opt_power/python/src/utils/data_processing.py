@@ -7,6 +7,7 @@ import time
 from numba import njit
 from src.config import EnvConfig, SimConfig
 from matio import load_from_mat
+import itertools
 
 # ==============================================================================
 # 1. HIGH-LEVEL INGESTION & FLEET CACHING PIPELINE
@@ -139,9 +140,9 @@ def load_and_cache_entire_fleet(config: EnvConfig) -> dict[int, dict]:
 
 def calibrate_markov_chain(data_dict: dict, config: SimConfig, manual_edges=None) -> dict:
     """Standard orchestration routine for single continuous data sets."""
-    ds_data = downsample_block_mean(data_dict['t'], data_dict['Pd'], config.Dt, align='t0')
+    ds_data = downsample_block_mean(data_dict['t'], data_dict['Pd'], config.delta_t, align='t0')
     mc_model = fit_dtmc(ds_data['Pd'], config.N_pd, config.alpha_mc, manual_edges=manual_edges)
-    mc_model['Delta'] = config.Dt  
+    mc_model['Delta'] = config.delta_t  
     return mc_model
 
 # ==============================================================================
@@ -347,3 +348,239 @@ def _find_optimal_lattice_subset(ideal_nodes: np.ndarray, lattice: np.ndarray) -
             n -= 1
             
     return optimal_grid
+
+@njit(cache=True)
+def _optimize_lattice_dp_worker(X: np.ndarray, W: np.ndarray, C: np.ndarray, K: int):
+    """
+    JIT-compiled Bellman Recursion for 1D Optimal Discrete Quantization.
+    Minimizes the Mean Squared Quantization Error (MSQE) over the rigid lattice.
+    """
+    M = len(C)
+    
+    # 1. Precompute MSQE costs for all possible segments between two chosen nodes
+    cost_mat = np.zeros((M, M))
+    for i in range(M):
+        for j in range(i + 1, M):
+            mid = (C[i] + C[j]) / 2.0
+            err = 0.0
+            for m in range(len(X)):
+                if C[i] <= X[m] < mid:
+                    err += W[m] * (X[m] - C[i])**2
+                elif mid <= X[m] <= C[j]:
+                    err += W[m] * (X[m] - C[j])**2
+            cost_mat[i, j] = err
+            
+    # 2. Precompute prefix (left tail) and suffix (right tail) costs
+    prefix = np.zeros(M)
+    suffix = np.zeros(M)
+    for i in range(M):
+        err_pref = 0.0
+        err_suff = 0.0
+        for m in range(len(X)):
+            if X[m] < C[i]:
+                err_pref += W[m] * (X[m] - C[i])**2
+            if X[m] > C[i]:
+                err_suff += W[m] * (X[m] - C[i])**2
+        prefix[i] = err_pref
+        suffix[i] = err_suff
+
+    # 3. Initialize Bellman DP Table
+    # dp[k, j] = min cost to place k nodes, rightmost node ending at index j
+    dp = np.full((K + 1, M), np.inf)
+    choice = np.zeros((K + 1, M), dtype=np.int32)
+    
+    # Base case k = 1
+    for j in range(M):
+        dp[1, j] = prefix[j]
+        
+    # Recursive step: Forward Induction
+    for k in range(2, K + 1):
+        for j in range(k - 1, M): 
+            best_cost = np.inf
+            best_i = -1
+            for i in range(k - 2, j): 
+                cost = dp[k - 1, i] + cost_mat[i, j]
+                if cost < best_cost:
+                    best_cost = cost
+                    best_i = i
+            dp[k, j] = best_cost
+            choice[k, j] = best_i
+            
+    # 4. Find the optimal terminal node (Kth node)
+    best_total = np.inf
+    best_last_j = -1
+    for j in range(K - 1, M):
+        total = dp[K, j] + suffix[j]
+        if total < best_total:
+            best_total = total
+            best_last_j = j
+            
+    # 5. Backtrack to recover the optimal lattice subset
+    selected_indices = np.zeros(K, dtype=np.int32)
+    curr_j = best_last_j
+    for k in range(K, 0, -1):
+        selected_indices[k - 1] = curr_j
+        curr_j = choice[k, curr_j]
+        
+    return selected_indices
+
+def generate_geometric_lattice_dp(data: np.ndarray, delta_P: float, N_d: int):
+    """
+    Public wrapper for the Geometric (MSQE) Bellman Grid Optimizer.
+    """
+    # 1. High-Resolution Data Binning (Reduces O(N) evaluation to O(1) histogram lookup)
+    fine_edges = np.arange(0, np.max(data) + delta_P, 1.0)
+    fine_mids = (fine_edges[:-1] + fine_edges[1:])/2.0
+    hist, _ = np.histogram(data, bins=fine_edges)
+
+    active_mask = hist > 0
+    X = fine_mids[active_mask]
+    W = hist[active_mask]
+
+    # 2. Extract FULL Physical Lattice Candidates
+    max_lattice_val = max(np.max(data) + delta_P, N_d * delta_P)
+    C = np.arange(0.0, max_lattice_val + (delta_P / 2.0), delta_P)
+    
+    # Safety catch
+    if N_d >= len(C):
+        smart_levels = C[:N_d]
+    else:
+        # 3. Execute Numba DP
+        selected_indices = _optimize_lattice_dp_worker(X, W, C, N_d)
+        smart_levels = C[selected_indices]
+
+    # 4. Voronoi Edge Generation
+    smart_edges = np.zeros(N_d + 1)
+    smart_edges[0] = -1e-3
+    smart_edges[-1] = max(np.max(data) + delta_P, smart_levels[-1] + delta_P)
+    for idx in range(1, N_d):
+        smart_edges[idx] = (smart_levels[idx-1] + smart_levels[idx]) / 2.0
+
+    return smart_levels, smart_edges
+
+
+def generate_frequency_lattice(data_array: np.ndarray, delta_P: float, m_states: int):
+    """ Empirical Frequency Projection. """
+    snapped_data = np.round(data_array / delta_P) * delta_P
+    unique_vals, counts = np.unique(snapped_data, return_counts=True)
+    
+    top_k = min(m_states, len(unique_vals))
+    top_indices = np.argsort(-counts)[:top_k]
+    smart_levels = np.sort(unique_vals[top_indices])
+
+    # CRITICAL FIX: Guarantee exactly m_states cardinality
+    # If the data is extremely flat and occupies fewer than m_states unique nodes, 
+    # we must pad the state space to prevent the Markov matrix from shrinking and crashing the SDP.
+    if len(smart_levels) < m_states:
+        max_val = max(np.max(data_array) + delta_P, m_states * delta_P)
+        full_lattice = np.arange(0.0, max_val + (delta_P / 2.0), delta_P)
+        unused = np.setdiff1d(full_lattice, smart_levels)
+        missing = m_states - len(smart_levels)
+        smart_levels = np.sort(np.concatenate([smart_levels, unused[:missing]]))
+
+    smart_edges = np.zeros(m_states + 1)
+    smart_edges[0] = -1e-3
+    smart_edges[-1] = max(np.max(data_array) + delta_P, smart_levels[-1] + delta_P)
+    for idx in range(1, m_states):
+        smart_edges[idx] = (smart_levels[idx-1] + smart_levels[idx]) / 2.0
+        
+    return smart_levels, smart_edges
+
+def optimize_lattice_combinations(data: np.ndarray, delta_P: float, N_d: int, method='mass_variance'):
+    """ Combinatorial Optimizer for the rigid delta_P lattice (Used for Mass Variance). """
+    fine_edges = np.arange(0, np.max(data) + delta_P, 1.0)
+    fine_mids = (fine_edges[:-1] + fine_edges[1:])/2.0
+    hist, _ = np.histogram(data, bins=fine_edges)
+
+    active_mask = hist > 0
+    active_mids = fine_mids[active_mask]
+    active_hist = hist[active_mask]
+    total_pts = np.sum(active_hist)
+    ideal_mass = 1.0 / N_d
+
+    snapped = np.round(data / delta_P) * delta_P
+    unique_vals, counts = np.unique(snapped, return_counts=True)
+    top_indices = np.argsort(-counts)[:min(25, len(unique_vals))]
+    candidates = np.sort(unique_vals[top_indices])
+
+    if len(candidates) < N_d:
+        candidates = np.arange(0, N_d * delta_P, delta_P)
+
+    best_cost = np.inf
+    best_subset = None
+
+    for subset in itertools.combinations(candidates, N_d):
+        subset_arr = np.array(subset)
+        diffs = np.abs(active_mids[:, None] - subset_arr[None, :])
+        nearest_idx = np.argmin(diffs, axis=1)
+
+        if method == 'mass_variance':
+            bin_counts = np.bincount(nearest_idx, weights=active_hist, minlength=N_d)
+            masses = bin_counts / total_pts
+            cost = np.sum((masses - ideal_mass)**2)
+        else:
+            # Fallback for geometric if combinatorial is requested
+            min_diffs = np.min(diffs, axis=1)
+            cost = np.sum(active_hist * (min_diffs**2))
+
+        if cost < best_cost:
+            best_cost = cost
+            best_subset = subset_arr
+
+    smart_levels = np.sort(best_subset)
+    smart_edges = np.zeros(N_d + 1)
+    smart_edges[0] = -1e-3
+    smart_edges[-1] = max(np.max(data) + delta_P, smart_levels[-1] + delta_P)
+    for idx in range(1, N_d):
+        smart_edges[idx] = (smart_levels[idx-1] + smart_levels[idx]) / 2.0
+
+    return smart_levels, smart_edges
+
+def generate_demand_grid(data: np.ndarray, delta_P: float, N_d: int, method: str = 'geometric'):
+    """
+    Master Router for Grid Generation. 
+    Routes to the appropriate topology algorithm.
+    """
+    min_observed = np.min(data)
+    max_observed = np.max(data)
+    
+    # Generate the physical hardware lattice
+    max_lattice_val = max(max_observed + delta_P, N_d * delta_P)
+    full_lattice = np.arange(0.0, max_lattice_val + (delta_P / 2.0), delta_P)
+
+    if method == 'geometric':
+        # Blazing fast Bellman Recursion
+        return generate_geometric_lattice_dp(data, delta_P, N_d)
+        
+    elif method == 'frequency':
+        # Empirical frequency (now padded to guarantee N_d cardinality)
+        return generate_frequency_lattice(data, delta_P, N_d)
+        
+    elif method == 'mass_variance':
+        # Combinatorial search for uniform information density
+        return optimize_lattice_combinations(data, delta_P, N_d, method='mass_variance')
+        
+    elif method == 'quantile':
+        # Legacy Continuous Quantiles snapped to lattice
+        legacy_edges = _make_edges_quantile_numba(data, N_d)
+        ideal_levels = np.array([(legacy_edges[i] + legacy_edges[i+1])/2.0 for i in range(N_d)])
+        levels = _find_optimal_lattice_subset(ideal_levels, full_lattice)
+        
+    elif method == 'linear':
+        # FIXED: Naive linear spacing bounds updated to min/max observed
+        ideal_edges = np.linspace(min_observed, max_observed, N_d + 1)
+        ideal_levels = (ideal_edges[:-1] + ideal_edges[1:]) / 2.0
+        levels = _find_optimal_lattice_subset(ideal_levels, full_lattice)
+        
+    else:
+        raise ValueError(f"Unknown grid method requested: {method}")
+
+    # Common Voronoi Edge Generation for snapped targets (Quantile & Linear)
+    edges = np.zeros(N_d + 1)
+    edges[0] = -1e-3
+    # Safer upper bound to encapsulate data without overextending artificially
+    edges[-1] = max(max_observed + delta_P, levels[-1] + delta_P) 
+    for idx in range(1, N_d):
+        edges[idx] = (levels[idx-1] + levels[idx]) / 2.0
+        
+    return levels, edges

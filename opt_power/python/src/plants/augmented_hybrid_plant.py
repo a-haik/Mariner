@@ -47,7 +47,7 @@ class AugmentedHybridPlant(BasePlant):
 
         c_bat = calc_cost_battery(
             p_batt=p_batt_real, dt=dt, 
-            C_rep=self.config.C_rep, E_life=self.config.E_life
+            C_rep=self.config.C_rep, Q_eol=self.config.Q_eol
         )
 
         c_s = calc_cost_switching(
@@ -62,7 +62,7 @@ class AugmentedHybridPlant(BasePlant):
         )
 
         # 5. State Kinematics (Integrate State of Charge)
-        soc_next = state.soc - (p_batt_real * (dt / 3600.0)) / self.config.Q_bat
+        soc_next = state.soc - (p_batt_real * (dt / 3600.0)) / self.config.Q_b
         soc_next = max(0.0, min(1.0, soc_next)) # Absolute floating-point safety bound
 
         # 6. Construct Next State (Propagating the new p_fc_actual into p_fc_prev)

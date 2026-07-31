@@ -13,11 +13,11 @@ from src.utils.math_utils import (
 
 @njit(cache=True)
 def _solve_augmented_baseline_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, pfc_vals: np.ndarray,
-                                      transition_matrix: np.ndarray, Dt: float, p_max: float, p_nom: float, 
+                                      transition_matrix: np.ndarray, delta_t: float, p_max: float, p_nom: float, 
                                       k_fc: float, k_h2: float, S_max: float, tau_fc: float, alpha_fc: float, 
                                       a0: float, a1: float, a2: float, lambda_trans: float, 
                                       nT: int, apply_terminal_n_cost: bool,
-                                      use_smart_grid: bool, dP: float):
+                                      use_smart_grid: bool, delta_P: float):
     """
     JIT-compiled backward induction routine for the 3D FC-Only System.
     State space: [Demand, Previous Modules, Previous FC Power]
@@ -81,13 +81,13 @@ def _solve_augmented_baseline_bellman(T: int, p_vals: np.ndarray, n_vals: np.nda
                             continue # Can't draw power if all modules are off
                             
                         # Centralized Cost Engine Calculations
-                        c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Dt)
+                        c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, delta_t)
                         c_s = calc_cost_switching(n_curr, n_prev, k_fc, S_max)
                         c_trans = calc_cost_transient(n_curr, n_prev, p_fc_curr, pfc_prev, lambda_trans)
                         
                         # 1D Interpolation over P_fc expected grid
                         if use_smart_grid:
-                            pfc_idx = get_exact_index_1d(p_fc_curr, 0.0, dP, pfc_size - 1)
+                            pfc_idx = get_exact_index_1d(p_fc_curr, 0.0, delta_P, pfc_size - 1)
                             exp_future = exp_future_cache[i_idx, a_idx, pfc_idx]
                         else:
                             expected_vals_array = exp_future_cache[i_idx, a_idx, :]
@@ -118,7 +118,7 @@ class AugmentedBaselineSDPSolver:
             n_vals=self.config.n_vals,
             pfc_vals=self.config.pfc_vals,
             transition_matrix=self.mc_model['P'],
-            Dt=float(self.config.Dt),
+            delta_t=float(self.config.delta_t),
             p_max=float(self.config.p_max),
             p_nom=float(self.config.p_nom),
             k_fc=float(self.config.k_fc),
@@ -133,5 +133,5 @@ class AugmentedBaselineSDPSolver:
             nT=int(self.config.nT),                                   
             apply_terminal_n_cost=bool(self.config.apply_terminal_n_cost),
             use_smart_grid=bool(self.config.use_smart_grid),
-            dP=float(self.config.dP)
+            delta_P=float(self.config.delta_P)
         )

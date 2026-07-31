@@ -14,10 +14,10 @@ from src.utils.math_utils import (
 
 @njit(cache=True)
 def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
-                          pb_vals: np.ndarray, transition_matrix: np.ndarray, Dt: float, 
+                          pb_vals: np.ndarray, transition_matrix: np.ndarray, delta_t: float, 
                           p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                           tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
-                          Q_bat: float, C_rep: float, E_life: float, 
+                          Q_b: float, C_rep: float, Q_eol: float, 
                           soc_min: float, soc_max: float, 
                           nT: int, apply_terminal_n_cost: bool,
                           soc_target: float, apply_terminal_soc_cost: bool,
@@ -55,7 +55,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                 term_soc_cost = 0.0
                 if apply_terminal_soc_cost:
                     # Positive cost for deficit, Negative cost (reward) for surplus
-                    delta_e_kwh = (soc_target - soc_val) * Q_bat
+                    delta_e_kwh = (soc_target - soc_val) * Q_b
                     term_soc_cost = delta_e_kwh * c_min_kwh
                     
                 V[T, i_idx, j_idx, k_idx] = term_n_cost + term_soc_cost
@@ -112,7 +112,7 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                                 p_fc = 0.0 # Clamp
                             
                             # 2. State Kinematics
-                            soc_next = soc_val - (pbatt * (Dt / 3600.0)) / Q_bat
+                            soc_next = soc_val - (pbatt * (delta_t / 3600.0)) / Q_b
                             
                             if soc_next < soc_min:
                                 penalty += (soc_min - soc_next) * 1e7
@@ -122,9 +122,9 @@ def _solve_hybrid_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_va
                                 soc_next = soc_max 
                                 
                             # 3. Instantaneous Cost Calculations
-                            C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Dt)
+                            C_o = calc_cost_operational(n_next, p_fc, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, delta_t)
                             C_s = calc_cost_switching(n_next, n_val, k_fc, S_max)
-                            C_bat = calc_cost_battery(pbatt, Dt, C_rep, E_life)
+                            C_bat = calc_cost_battery(pbatt, delta_t, C_rep, Q_eol)
                             
                             # 4. Interpolate Expected Future Cost 
                             if use_smart_grid:
@@ -161,7 +161,7 @@ class HybridSDPSolver:
             policy_pbatt: (T, P_size, n_size, soc_size) array of optimal battery power [kW].
             V: (T, P_size, n_size, soc_size) array of expected cumulative costs.
         """
-        dSoC = (self.config.dP * self.config.Dt) / (self.config.Q_bat * 3600.0) if bool(self.config.use_smart_grid) else 0.0
+        dSoC = (self.config.delta_P * self.config.delta_t) / (self.config.Q_b * 3600.0) if bool(self.config.use_smart_grid) else 0.0
         return _solve_hybrid_bellman(
             T=horizon_length,
             p_vals=self.mc_model['levels'],
@@ -169,7 +169,7 @@ class HybridSDPSolver:
             soc_vals=self.config.soc_vals,
             pb_vals=self.config.pb_vals,
             transition_matrix=self.mc_model['P'],
-            Dt=float(self.config.Dt),
+            delta_t=float(self.config.delta_t),
             p_max=float(self.config.p_max),
             p_nom=float(self.config.p_nom),
             k_fc=float(self.config.k_fc),
@@ -180,9 +180,9 @@ class HybridSDPSolver:
             a0=float(self.config.a0),
             a1=float(self.config.a1),
             a2=float(self.config.a2),
-            Q_bat=float(self.config.Q_bat),
+            Q_b=float(self.config.Q_b),
             C_rep=float(self.config.C_rep),
-            E_life=float(self.config.E_life),
+            Q_eol=float(self.config.Q_eol),
             soc_min=float(self.config.soc_min),
             soc_max=float(self.config.soc_max),
             nT=int(self.config.nT),                                   

@@ -16,7 +16,7 @@ class AugmentedSDPBaselineControl(ControlLaw):
         self.policy = policy_matrix
 
     def get_action(self, state: State, time_sec: float) -> Action:
-        macro_idx = int(time_sec // self.config.Dt)
+        macro_idx = int(time_sec // self.config.delta_t)
         t_idx = min(macro_idx, len(self.policy) - 1)
 
         # 1. Snap 3D continuous sensors to discrete grid

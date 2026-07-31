@@ -21,14 +21,31 @@ class ModelVault:
         self.registry = self._load_registry()
 
     def _load_registry(self) -> dict:
+        registry = {"markov": {}, "sdp": {}}
+        
         if os.path.exists(self.registry_path):
-            with open(self.registry_path, 'r') as f:
-                return json.load(f)
-        return {"markov": {}, "sdp": {}}
+            try:
+                with open(self.registry_path, 'r') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        registry.update(data)
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"[Vault] WARNING: Registry file corrupted or unreadable ({e}). Falling back to empty registry.")
+        
+        # Guarantee required dictionary keys exist
+        registry.setdefault("markov", {})
+        registry.setdefault("sdp", {})
+        return registry
 
     def _save_registry(self):
-        with open(self.registry_path, 'w') as f:
+        # Write atomically using a temporary file to prevent corruption on sudden interruptions
+        dir_name = os.path.dirname(self.registry_path) or "."
+        temp_path = os.path.join(dir_name, f".{os.path.basename(self.registry_path)}.tmp")
+        
+        with open(temp_path, 'w') as f:
             json.dump(self.registry, f, indent=4)
+            
+        os.replace(temp_path, self.registry_path)
 
     def _extract_math_primitives(self, config) -> dict:
         """
@@ -129,16 +146,28 @@ class ModelVault:
         }
         self._save_registry()
 
-    def load_sdp_model(self, hash_id: str):
-        if hash_id not in self.registry["sdp"]:
-            return None
-            
-        npz_path = self.registry["sdp"][hash_id]["file_path"]
+    def load_sdp_model(self, hash_id):
+        npz_path = os.path.join(self.sdp_dir, f"{hash_id}.npz")
+        
         if not os.path.exists(npz_path):
             return None
             
-        with np.load(npz_path) as data:
-            raw_solution = tuple(data[f"arr_{i}"].copy() for i in range(len(data.files)))
+        try:
+            # Attempt to open and decompress the binary file
+            with np.load(npz_path) as data:
+                raw_solution = tuple(data[f"arr_{i}"].copy() for i in range(len(data.files)))
+                
+            offline_time = self.registry["sdp"].get(hash_id, {}).get("offline_time", 0.0)
+            return raw_solution, offline_time
             
-        offline_time = self.registry["sdp"][hash_id].get("offline_time", 0.0)
-        return raw_solution, offline_time
+        except Exception as e:
+            # If zlib, EOFError, or BadZipFile throws an error due to corruption
+            print(f" \n[Vault] WARNING: Corrupted cache file detected for {hash_id}.")
+            print(f" -> Deleting corrupted file and forcing recomputation... (Error: {e})")
+            
+            # Delete the corrupted file so it doesn't break future runs
+            if os.path.exists(npz_path):
+                os.remove(npz_path)
+                
+            # Return None to trigger a standard Cache MISS in the benchmarker
+            return None

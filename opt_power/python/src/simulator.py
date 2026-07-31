@@ -70,7 +70,7 @@ class Simulator:
             )
             
             # Positive cost for deficit, negative (reward) for surplus
-            delta_e_kwh = (self.config.soc_target - current_state.soc) * self.config.Q_bat
+            delta_e_kwh = (self.config.soc_target - current_state.soc) * self.config.Q_b
             terminal_soc_cost = delta_e_kwh * c_min_kwh
 
         # Add boundary conditions to the true operational cost

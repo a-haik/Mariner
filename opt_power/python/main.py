@@ -33,7 +33,7 @@ def main():
     print("\nExecuting Step 3: Loading and calibrating Markov chain from SOV telemetry...")
     raw_training_data = load_and_interpolate_sov_data(training_files)
     mc_model = calibrate_markov_chain(raw_training_data, config)
-    print(f"-> Calibration successful. State space levels derived: {config.N_Pd} tracking zones.")
+    print(f"-> Calibration successful. State space levels derived: {config.N_d} tracking zones.")
     
     print("\nExecuting Step 4: Isolating validation tracking trajectory (Day: 08-Feb)...")
     validation_file = ['../data/SOV_08-Feb-2023.mat']
@@ -41,7 +41,7 @@ def main():
     P_d_continuous = raw_validation_data['Pd']
     
     # We downsample strictly to determine the backward induction horizon length for the offline solver
-    ds_validation = downsample_block_mean(raw_validation_data['t'], P_d_continuous, config.Dt, align='t0')
+    ds_validation = downsample_block_mean(raw_validation_data['t'], P_d_continuous, config.delta_t, align='t0')
     horizon_length = len(ds_validation['Pd'])
     
     # NOTE: You can easily swap this out for `HybridPlant(config)` when you're ready

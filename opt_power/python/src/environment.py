@@ -41,16 +41,16 @@ def create_gaussian_random_walk_matrix(states: np.ndarray, sigma: float) -> np.n
     Converts a continuous Gaussian random walk model into a discrete Markov Chain matrix.
     Perfect replication of create_gaussian_random_walk_matrix inside create_transition_matrix.m.
     """
-    N_Pd = len(states)
-    P = np.zeros((N_Pd, N_Pd))
+    N_d = len(states)
+    P = np.zeros((N_d, N_d))
     
-    for i in range(N_Pd):
+    for i in range(N_d):
         current_state = states[i]
         if current_state <= 0:
             P[i, 0] = 1.0  # Boundary condition: Absorbing barrier at zero load limits
             continue
             
-        for j in range(N_Pd):
+        for j in range(N_d):
             next_state = states[j]
             delta = next_state - current_state
             

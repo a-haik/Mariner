@@ -16,12 +16,12 @@ from src.utils.math_utils import (
 @njit(cache=True)
 def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc_vals: np.ndarray,
                              pfc_vals: np.ndarray, pb_vals: np.ndarray, transition_matrix: np.ndarray, 
-                             Dt: float, p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
+                             delta_t: float, p_max: float, p_nom: float, k_fc: float, k_h2: float, S_max: float, 
                              tau_fc: float, alpha_fc: float, a0: float, a1: float, a2: float,
-                             Q_bat: float, C_rep: float, E_life: float, lambda_trans: float,
+                             Q_b: float, C_rep: float, Q_eol: float, lambda_trans: float,
                              soc_min: float, soc_max: float, nT: int, apply_terminal_n_cost: bool,
                              soc_target: float, apply_terminal_soc_cost: bool,
-                             use_smart_grid: bool, dP: float, dSoC: float):
+                             use_smart_grid: bool, delta_P: float, dSoC: float):
     """
     JIT-compiled backward induction routine for the 4D Hybrid System.
     State space: [Demand, Previous Modules, Previous SoC, Previous FC Power]
@@ -52,7 +52,7 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                 soc_val = soc_vals[k_idx]
                 term_soc_cost = 0.0
                 if apply_terminal_soc_cost:
-                    delta_e_kwh = (soc_target - soc_val) * Q_bat
+                    delta_e_kwh = (soc_target - soc_val) * Q_b
                     term_soc_cost = delta_e_kwh * c_min_kwh
                     
                 for l_idx in range(pfc_size):
@@ -112,7 +112,7 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                                     p_fc_curr = 0.0 # Clamp
                                 
                                 # 2. State Kinematics (Project SoC with Slack Math)
-                                soc_curr = soc_prev - (pbatt * (Dt / 3600.0)) / Q_bat
+                                soc_curr = soc_prev - (pbatt * (delta_t / 3600.0)) / Q_b
                                 
                                 if soc_curr < soc_min:
                                     penalty += (soc_min - soc_curr) * 1e7
@@ -122,15 +122,15 @@ def _solve_augmented_bellman(T: int, p_vals: np.ndarray, n_vals: np.ndarray, soc
                                     soc_curr = soc_max # Clamp
                                     
                                 # 3. Centralized Cost Engine Calculations
-                                c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Dt)
+                                c_o = calc_cost_operational(n_curr, p_fc_curr, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, delta_t)
                                 c_s = calc_cost_switching(n_curr, n_prev, k_fc, S_max)
-                                c_bat = calc_cost_battery(pbatt, Dt, C_rep, E_life)
+                                c_bat = calc_cost_battery(pbatt, delta_t, C_rep, Q_eol)
                                 c_trans = calc_cost_transient(n_curr, n_prev, p_fc_curr, pfc_prev, lambda_trans)
                                 
                                 # 4. Expected Future Cost 
                                 if use_smart_grid:
                                     soc_idx = get_exact_index_1d(soc_curr, soc_min, dSoC, soc_size - 1)
-                                    pfc_idx = get_exact_index_1d(p_fc_curr, 0.0, dP, pfc_size - 1)
+                                    pfc_idx = get_exact_index_1d(p_fc_curr, 0.0, delta_P, pfc_size - 1)
                                     exp_future = exp_future_cache[i_idx, a_idx, soc_idx, pfc_idx]
                                 else:
                                     z_mat = exp_future_cache[i_idx, a_idx, :, :]
@@ -159,7 +159,7 @@ class AugmentedHybridSDPSolver:
 
     def compute_solution(self, horizon_length: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         
-        dSoC = (self.config.dP * self.config.Dt) / (self.config.Q_bat * 3600.0) if self.config.use_smart_grid else 0.0
+        dSoC = (self.config.delta_P * self.config.delta_t) / (self.config.Q_b * 3600.0) if self.config.use_smart_grid else 0.0
 
         return _solve_augmented_bellman(
             T=horizon_length,
@@ -169,7 +169,7 @@ class AugmentedHybridSDPSolver:
             pfc_vals=self.config.pfc_vals,
             pb_vals=self.config.pb_vals,
             transition_matrix=self.mc_model['P'],
-            Dt=float(self.config.Dt),
+            delta_t=float(self.config.delta_t),
             p_max=float(self.config.p_max),
             p_nom=float(self.config.p_nom),
             k_fc=float(self.config.k_fc),
@@ -180,9 +180,9 @@ class AugmentedHybridSDPSolver:
             a0=float(self.config.a0),
             a1=float(self.config.a1),
             a2=float(self.config.a2),
-            Q_bat=float(self.config.Q_bat),
+            Q_b=float(self.config.Q_b),
             C_rep=float(self.config.C_rep),
-            E_life=float(self.config.E_life),
+            Q_eol=float(self.config.Q_eol),
             lambda_trans=float(self.config.lambda_trans),
             soc_min=float(self.config.soc_min),
             soc_max=float(self.config.soc_max),
@@ -191,6 +191,6 @@ class AugmentedHybridSDPSolver:
             soc_target=float(self.config.soc_target),
             apply_terminal_soc_cost=bool(self.config.apply_terminal_soc_cost),
             use_smart_grid=bool(self.config.use_smart_grid),
-            dP=float(self.config.dP),
+            delta_P=float(self.config.delta_P),
             dSoC=float(dSoC)
         )

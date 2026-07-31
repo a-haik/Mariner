@@ -208,15 +208,16 @@ def plot_markov_matrix(mc_model: dict, title: str = "Markov Transition Matrix", 
         plt.show()
 
 plt.rcParams.update({
+    'figure.dpi': 600,
     'font.family': 'sans-serif',
     'font.sans-serif': ['Helvetica', 'Arial', 'DejaVu Sans'],
-    'font.size': 8,
-    'axes.labelsize': 8,
-    'axes.titlesize': 8,
-    'xtick.labelsize': 7,
-    'ytick.labelsize': 7,
-    'legend.fontsize': 7,
-    'figure.titlesize': 9,
+    'font.size': 7,
+    'axes.labelsize': 7,
+    'axes.titlesize': 7,
+    'xtick.labelsize': 6,
+    'ytick.labelsize': 6,
+    'legend.fontsize': 6,
+    'figure.titlesize': 8,
     'lines.linewidth': 1.0,
     'grid.linewidth': 0.5,
     'grid.alpha': 0.4
@@ -242,7 +243,6 @@ def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0
     term_n_cost, term_soc_cost = terminal_costs
 
     # --- COST BREAKDOWN CALCULATION (FOR COST SUBPLOT) ---
-    # Total accumulated costs over 24h including boundary conditions
     cost_data = {}
     if has_split_fc:
         cost_data['Fuel'] = df['cost_h2'].sum()
@@ -253,7 +253,10 @@ def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0
     cost_data['Switching'] = df['cost_s'].sum() + term_n_cost
     
     if has_battery:
-        cost_data['Battery'] = df['cost_bat'].sum() + term_soc_cost
+        cost_data['Battery'] = df['cost_bat'].sum()  # Pure operational wear
+        if term_soc_cost != 0.0:
+            cost_data['Term. SoC'] = term_soc_cost   # Isolated boundary condition
+            
     if has_transient:
         cost_data['Load Change'] = df['cost_tr'].sum()
 
@@ -407,24 +410,40 @@ def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0
     
     categories = list(cost_data.keys())
     values = list(cost_data.values())
-    colors = ['#1f77b4', '#2ca02c', '#d62728', '#ff7f0e', '#9467bd'][:len(categories)]
+    
+    # Extended color palette to accommodate the extra bar if present
+    color_palette = ['#1f77b4', '#2ca02c', '#d62728', '#ff7f0e', '#9467bd', '#8c564b']
+    colors = color_palette[:len(categories)]
     
     bars = ax3.bar(categories, values, color=colors, edgecolor='black', linewidth=0.6, width=0.55)
     ax3.set_ylabel("Final Cost [$]")
     
-    # Scientific handling for scale differences: Symlog scale
-    ax3.set_yscale('symlog', linthresh=10.0)
-    ax3.set_ylim([0, max(values) * 10])
-    ax3.grid(True, which='both', linestyle='--', axis='y')
+    # Baseline at y=0 (separates cost penalties from credits)
+    ax3.axhline(0, color='black', linewidth=0.8, linestyle='-', alpha=0.7)
     
-    # Annotate values above bars
+    # Symlog handling for mixed magnitude/negative values
+    ax3.set_yscale('symlog', linthresh=10.0)
+    
+    # Dynamic Y-Limits accommodating positive peaks and negative dips
+    max_val = max(values) if values else 1.0
+    min_val = min(values) if values else 0.0
+    upper_lim = max(max_val * 10, 100)
+    lower_lim = min_val * 5 if min_val < 0 else -1.0
+    ax3.set_ylim([lower_lim, upper_lim])
+    
+    ax3.grid(True, which='both', linestyle='--', axis='y', alpha=0.5)
+    
+    # Annotate exact values with dynamic vertical alignment (top vs. bottom offset)
     for bar in bars:
         height = bar.get_height()
+        va_align = 'bottom' if height >= 0 else 'top'
+        y_offset = 3 if height >= 0 else -3
+        
         ax3.annotate(f'${height:.1f}',
                     xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 3),
+                    xytext=(0, y_offset),
                     textcoords="offset points",
-                    ha='center', va='bottom', fontsize=6.5, rotation=0)
+                    ha='center', va=va_align, fontsize=6.5, rotation=0)
 
     # Labelled (d) now
     ax3.text(0.02, 0.92, "(d)", transform=ax3.transAxes, fontweight='bold', fontsize=9)
@@ -453,3 +472,213 @@ def plot_simulation_dashboard(df: pd.DataFrame, config, terminal_costs=(0.0, 0.0
             plt.savefig(f'figures/{safe_title}_cas_dc.png', dpi=300, bbox_inches='tight')
         
         plt.show()
+
+def plot_simulation_dashboard_bis(df: pd.DataFrame, config, title: str = "Simulation Dashboard", 
+                                  indiv: bool = False, save_plot: bool = False):
+    """
+    Publication-ready stacked dashboard for Elsevier cas-dc.
+    - indiv=False: Full 2-column figure (width = 16.6 cm / ~6.54 in)
+    - indiv=True : Single-column figure (width = 8.0 cm / ~3.15 in)
+    """
+    t_hours = df['time'] / 3600.0
+    p_module = np.where(df['n_active'] > 0, df['p_fc_actual'] / df['n_active'], 0.0)
+    has_battery = 'p_batt_actual' in df.columns and 'soc' in df.columns
+
+    # Dimensions (Inches: 1 cm = 0.3937 in)
+    if indiv:
+        figsize = (3.15, 4.5)
+    else:
+        figsize = (6.54, 3.5)
+
+    num_panes = 3 if has_battery else 2
+    
+    # sharex=True forces the single time axis at the bottom
+    fig, axes = plt.subplots(num_panes, 1, figsize=figsize, sharex=True)
+    
+    if num_panes == 2:
+        ax1, ax2 = axes
+        ax3 = None
+    else:
+        ax1, ax2, ax3 = axes
+
+    time_ticks = np.arange(0, 25, 4)
+
+    # =========================================================
+    # --- DETECT SOC SATURATION INTERVALS & MIDPOINTS ---
+    # =========================================================
+    sat_intervals = []
+    sat_mid_times = []
+    sat_mid_socs = []
+    color_sat_marker = '#d97706'  # Muted crimson for marker
+    color_sat_shade = '#888888'   # Clean neutral gray for shading
+
+    # Minimum gap threshold between saturation events to trigger a merge (15 min = 0.25 h)
+    min_gap_hours = getattr(config, 'sat_min_gap_hours', 0.25)
+
+    if has_battery:
+        # Config Limits (fraction scale 0..1)
+        soc_min_val = getattr(config, 'soc_min', 0.2)
+        soc_max_val = getattr(config, 'soc_max', 0.8)
+
+        # Detect contiguous saturation states
+        tol = 1e-4
+        soc_series = df['soc'].to_numpy()
+        is_sat = (soc_series <= soc_min_val + tol) | (soc_series >= soc_max_val - tol)
+
+        if np.any(is_sat):
+            sat_int = is_sat.astype(int)
+            diff = np.diff(np.pad(sat_int, (1, 1), 'constant'))
+            starts = np.where(diff == 1)[0]
+            ends = np.where(diff == -1)[0] - 1
+
+            # 1. Extract raw continuous intervals
+            raw_intervals = [(t_hours.iloc[s_i], t_hours.iloc[e_i]) for s_i, e_i in zip(starts, ends)]
+
+            # 2. Low-Pass / Debounce Merge: Combine events closer than min_gap_hours
+            merged_intervals = []
+            for start, end in raw_intervals:
+                if not merged_intervals:
+                    merged_intervals.append([start, end])
+                else:
+                    prev_start, prev_end = merged_intervals[-1]
+                    if (start - prev_end) <= min_gap_hours:
+                        merged_intervals[-1][1] = end  # Merge into previous window
+                    else:
+                        merged_intervals.append([start, end])
+
+            # 3. Calculate midpoints for display on merged windows
+            for t_start, t_end in merged_intervals:
+                sat_intervals.append((t_start, t_end))
+
+                t_mid = (t_start + t_end) / 2.0
+                # Lookup exact SOC at nearest time step to t_mid
+                idx_mid = (t_hours - t_mid).abs().idxmin()
+                soc_mid = df['soc'].iloc[idx_mid] * 100.0
+
+                sat_mid_times.append(t_mid)
+                sat_mid_socs.append(soc_mid)
+
+    # =========================================================
+    # --- PANE 1 (a): Power Split ---
+    # =========================================================
+    color_fc = "#333333"
+    color_d = '#1f77b4'
+
+    ax1.plot(t_hours, df['P_d'], label='Power Demand', color=color_d, alpha=0.75, linewidth=0.8)
+    ax1.plot(t_hours, df['p_fc_actual'], label='FC Power', color=color_fc, linewidth=1.2)
+    
+    ax1.set_ylabel("Power [kW]")
+    ax1.grid(True, linestyle='--')
+    
+    current_bottom, current_top = ax1.get_ylim()
+    ax1.set_ylim(bottom=current_bottom, top=current_top * 1.15)
+    
+    ax1.legend(loc='upper right', ncol=2, frameon=True, framealpha=0.9)
+    ax1.text(0.015, 0.88, "(a)", transform=ax1.transAxes, fontweight='bold', fontsize=8)
+
+    # =========================================================
+    # --- PANE 2 (b): Module Kinematics ---
+    # =========================================================
+    color_p = "#333333"
+    color_n = '#2ca02c'
+
+    ax2.plot(t_hours, p_module, label='Individual Module Power', color=color_p, linewidth=.8, alpha=1)
+    ax2.set_ylabel("Module Power [kW]")
+    ax2.tick_params(axis='y')
+
+    ax2_twin = ax2.twinx()
+    ax2_twin.step(t_hours, df['n_active'], label='Active Modules Count', color=color_n, linewidth=1.2, alpha=.85, where='post')
+    ax2_twin.set_ylabel("Active Modules [-]", color=color_n)
+    ax2_twin.tick_params(axis='y', labelcolor=color_n)
+    
+    ax2.grid(True, linestyle='--')
+    ax2.text(0.015, 0.88, "(b)", transform=ax2.transAxes, fontweight='bold', fontsize=8)
+    ax2.set_zorder(ax2_twin.get_zorder() + 1)
+
+    # =========================================================
+    # --- PANE 3 (c): Battery Utilization & SOC ---
+    # =========================================================
+    if has_battery:
+        soc_min = soc_min_val * 100
+        soc_max = soc_max_val * 100
+        soc_init = getattr(config, 'soc_initial', 0.5) * 100
+
+        # --- RIGHT AXIS: Battery Power Fill ---
+        ax3_twin = ax3.twinx()
+        p_max = df['p_batt_actual'].abs().max()
+        limit_p = max(p_max * 1.1, 1.0)
+        
+        soc_fraction = max(0.1, min(0.9, soc_init / 100.0)) 
+        total_span = max(limit_p / (1 - soc_fraction), limit_p / soc_fraction)
+        ax3_twin.set_ylim([-total_span * soc_fraction, total_span * (1 - soc_fraction)])
+
+        color_b = '#d62728'
+        color_s = "#333333"
+
+        ax3_twin.fill_between(
+            t_hours, 0, df['p_batt_actual'], 
+            color=color_b, alpha=0.75, 
+            edgecolor='none', linewidth=0.0,
+            label='Battery Power', zorder=3, interpolate=False
+        )
+        ax3_twin.set_ylabel("Battery Power [kW]", color=color_b)
+        ax3_twin.tick_params(axis='y', labelcolor=color_b)
+
+        # --- LEFT AXIS: SOC Curve & Safety Boundaries ---
+        ax3.plot(t_hours, df['soc'] * 100, color=color_s, linewidth=1, zorder=5)
+        ax3.set_ylabel("State Of Charge [%]")
+        ax3.set_ylim([0, 100])
+        
+        # Safety Limit Lines (Dotted)
+        ax3.axhline(soc_max, color='black', linewidth=0.8, linestyle=':', alpha=.75, zorder=4)
+        ax3.axhline(soc_min, color='black', linewidth=0.8, linestyle=':', alpha=.75, zorder=4)
+        
+        if hasattr(config, 'soc_target'):
+            soc_tgt = config.soc_target * 100
+            ax3.axhline(soc_tgt, color='k', linewidth=0.9, linestyle='--', alpha=.75, zorder=4)
+
+        # Smaller, subtle circular markers at saturation points
+        if sat_mid_times:
+            ax3.scatter(
+                sat_mid_times, sat_mid_socs, 
+                color=color_sat_marker, marker='*', s=30, zorder=6, linewidth=0.4,
+                edgecolor='black', label='SOC Saturation'
+            )
+
+        ax3.legend(loc='upper right', frameon=True, framealpha=0.9)
+
+        ax3.set_zorder(ax3_twin.get_zorder() + 1)
+        ax3.patch.set_visible(False)
+        ax3.grid(True, linestyle='--', alpha=0.5, zorder=1)
+        
+        ax3.text(0.015, 0.88, "(c)", transform=ax3.transAxes, fontweight='bold', fontsize=8)
+
+    # # =========================================================
+    # # --- DRAW GRAY SHADING SPANS FOR SATURATION WINDOWS ---
+    # # =========================================================
+    # active_axes = [ax for ax in [ax1, ax2, ax3] if ax is not None]
+    # for t_start, t_end in sat_intervals:
+    #     for ax in active_axes:
+    #         ax.axvspan(
+    #             t_start, t_end, color=color_sat_shade, 
+    #             alpha=0.5, linewidth=0, zorder=0, hatch='///'
+    #         )
+
+    # =========================================================
+    # --- FINAL FORMATTING (SHARED AXIS) ---
+    # =========================================================
+    bottom_ax = axes[-1] if num_panes > 1 else axes
+    bottom_ax.set_xlabel("Time [h]")
+    bottom_ax.set_xlim([0, 24])
+    bottom_ax.set_xticks(time_ticks)
+    
+    plt.tight_layout()
+    fig.subplots_adjust(hspace=0.1) 
+    
+    if save_plot:
+        os.makedirs('figures', exist_ok=True)
+        safe_title = title.replace(" ", "_").lower()
+        plt.savefig(f'figures/{safe_title}_dashboard.pdf', dpi=300, bbox_inches='tight')
+        plt.savefig(f'figures/{safe_title}_dashboard.png', dpi=300, bbox_inches='tight')
+    
+    plt.show()

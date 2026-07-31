@@ -7,7 +7,7 @@ from src.utils.math_utils import calc_cost_operational, calc_cost_switching
 
 @njit(cache=True)
 def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray, 
-                             transition_matrix: np.ndarray, Dt: float, 
+                             transition_matrix: np.ndarray, delta_t: float, 
                              p_max: float, p_nom: float, k_fc: float, k_h2: float, 
                              S_max: float, tau_fc: float, alpha_fc: float,
                              a0: float, a1: float, a2: float,
@@ -66,7 +66,7 @@ def _solve_bellman_recursion(T: int, p_vals: np.ndarray, n_vals: np.ndarray,
                     
                     exp_future = exp_future_cache[a_idx]
 
-                    C_o = calc_cost_operational(n_next, p_val, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, Dt)
+                    C_o = calc_cost_operational(n_next, p_val, p_nom, tau_fc, alpha_fc, k_fc, k_h2, a0, a1, a2, delta_t)
                     C_s = calc_cost_switching(n_next, n_val, k_fc, S_max)
                             
                     total_cost = C_o + C_s + exp_future
@@ -97,7 +97,7 @@ class BaselineSDPSolver:
             p_vals=self.mc_model['levels'],
             n_vals=self.config.n_vals,
             transition_matrix=self.mc_model['P'],
-            Dt=float(self.config.Dt),
+            delta_t=float(self.config.delta_t),
             p_max=float(self.config.p_max),
             p_nom=float(self.config.p_nom),
             k_fc=float(self.config.k_fc),

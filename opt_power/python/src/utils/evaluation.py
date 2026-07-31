@@ -3,7 +3,7 @@ import time
 import numpy as np
 import pandas as pd
 from src.config import EnvConfig, SimConfig
-from src.utils.data_processing import downsample_block_mean, fit_dtmc
+from src.utils.data_processing import downsample_block_mean, fit_dtmc, generate_geometric_lattice_dp
 from src.simulator import Simulator
 from src.utils.vault import ModelVault
 
@@ -56,15 +56,18 @@ class VoyageBenchmarker:
     def _get_or_compute_models(self, train_days: list, solver_cls, horizon_length: int):
         total_offline_time = 0.0
         
-        # --- 1. MARKOV MODEL ---
-        markov_hash = self.vault.generate_markov_hash(train_days, self.config)
+        # Determine current topology method (Defaults to optimal geometric DP)
+        grid_method = getattr(self.config, 'grid_method', 'geometric')
+        
+        # Hash modification to keep Vault caches cleanly separated by method
+        markov_hash = self.vault.generate_markov_hash(train_days, self.config) + f"_{grid_method}"
         loaded_mc = self.vault.load_markov_model(markov_hash)
         
         if loaded_mc is not None:
-            print(f" [Vault] Cache HIT: Markov Chain succesfully loaded for days {train_days}")
+            print(f" [Vault] Cache HIT: Markov Chain loaded ({grid_method}) for days {train_days}")
             mc_model, mc_time = loaded_mc
         else:
-            print(f" [Vault] Cache MISS: Training Markov Chain for days {train_days}")
+            print(f" [Vault] Cache MISS: Training Markov Chain ({grid_method}) for days {train_days}")
             train_t, train_pd = [], []
             for d in train_days:
                 data = self.fleet_cache[d]
@@ -75,49 +78,29 @@ class VoyageBenchmarker:
             t_concat = np.concatenate(train_t)
             pd_concat = np.concatenate(train_pd)
             
-            ds_train = downsample_block_mean(t_concat, pd_concat, self.config.Dt, align='t0')
+            ds_train = downsample_block_mean(t_concat, pd_concat, self.config.delta_t, align='t0')
             
             # Start Markov Timer
             start_t = time.perf_counter()
             
             if getattr(self.config, 'use_smart_grid', False):
-                dP = self.config.dP
-                max_observed = ds_train['Pd'].max()
+                delta_P = self.config.delta_P
+                N_d = self.config.N_d
                 
-                # 1. Generate the EXACT same bin edges the legacy code used
-                from src.utils.data_processing import _make_edges_quantile_numba
-                legacy_edges = _make_edges_quantile_numba(ds_train['Pd'], self.config.N_Pd)
+                from src.utils.data_processing import generate_demand_grid
+                # 1. Dynamically generate the requested grid topology
+                smart_levels, smart_edges = generate_demand_grid(ds_train['Pd'], delta_P, N_d, method=grid_method)
                 
-                # 2. Calculate the exact same midpoints the supervisor used
-                ideal_levels = np.zeros(self.config.N_Pd)
-                for idx in range(self.config.N_Pd):
-                    ideal_levels[idx] = (legacy_edges[idx] + legacy_edges[idx+1]) / 2.0
-                
-                # 3. Define the absolute physical dP lattice 
-                max_lattice_val = max(max_observed + dP, self.config.N_Pd * dP)
-                full_lattice = np.arange(0.0, max_lattice_val + (dP / 2.0), dP)
-                
-                # 4. Use the Meta-DP solver to snap the supervisor's midpoints to the dP grid
-                from src.utils.data_processing import _find_optimal_lattice_subset
-                smart_levels = _find_optimal_lattice_subset(ideal_levels, full_lattice)
-                
-                # 5. Derive boundaries (edges) exactly halfway between our chosen sparse levels
-                smart_edges = np.zeros(self.config.N_Pd + 1)
-                smart_edges[0] = -1e-3  # Absolute safe lower bound
-                smart_edges[-1] = max_lattice_val + dP # Safe upper bound
-                for idx in range(1, self.config.N_Pd):
-                    smart_edges[idx] = (smart_levels[idx-1] + smart_levels[idx]) / 2.0
-                
-                # 6. Lock the Markov Math
-                mc_model = fit_dtmc(ds_train['Pd'], self.config.N_Pd, self.config.alpha_mc, 
+                # 2. Fit the Markov Chain to the optimal physical boundaries
+                mc_model = fit_dtmc(ds_train['Pd'], N_d, self.config.alpha_mc, 
                                     manual_edges=smart_edges, manual_levels=smart_levels)
                 
             else:
-                mc_model = fit_dtmc(ds_train['Pd'], self.config.N_pd, self.config.alpha_mc)
+                mc_model = fit_dtmc(ds_train['Pd'], self.config.N_d, self.config.alpha_mc)
                 
             mc_time = time.perf_counter() - start_t
             
-            mc_model['Delta'] = self.config.Dt  
+            mc_model['Delta'] = self.config.delta_t  
             self.vault.save_markov_model(markov_hash, mc_model, train_days, offline_time=mc_time)
             
         total_offline_time += mc_time
@@ -125,14 +108,14 @@ class VoyageBenchmarker:
         # --- 2. SDP BELLMAN MATRICES ---
         raw_solution = None
         if solver_cls is not None:
-            sdp_hash = self.vault.generate_sdp_hash(markov_hash, solver_cls.__name__, horizon_length, self.config)
+            sdp_hash = self.vault.generate_sdp_hash(markov_hash, solver_cls.__name__, horizon_length, self.config) + f"_{grid_method}"
             loaded_sdp = self.vault.load_sdp_model(sdp_hash)
             
             if loaded_sdp is not None:
-                print(f" [Vault] Cache HIT: SDP solution succesfully loaded ({solver_cls.__name__})")
+                print(f" [Vault] Cache HIT: SDP solution loaded ({solver_cls.__name__})")
                 raw_solution, sdp_time = loaded_sdp
             else:
-                print(f" [Vault] Cache MISS: Solving SDP({solver_cls.__name__})")
+                print(f" [Vault] Cache MISS: Solving SDP ({solver_cls.__name__})")
                 solver = solver_cls(self.config, mc_model)
                 
                 # Start Bellman Timer
@@ -157,7 +140,7 @@ class VoyageBenchmarker:
             levels = mc_model['levels']
             from src.utils.math_utils import nearest_index_1d
             test_pd = np.array([levels[nearest_index_1d(levels, val)] for val in test_pd_macro])
-            dt_override = float(self.config.Dt)
+            dt_override = float(self.config.delta_t)
         else:
             test_pd = test_pd_micro
             dt_override = None
@@ -186,7 +169,7 @@ class VoyageBenchmarker:
 
     def compare_approaches(self, approaches: dict, train_days: list, test_day: int) -> BenchmarkReport:
         test_data = self.fleet_cache[test_day]
-        ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Dt, align='t0')
+        ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.delta_t, align='t0')
         horizon = len(ds_test['Pd'])
         
         results, telemetry_dict = {}, {}
@@ -213,7 +196,7 @@ class VoyageBenchmarker:
             train_days = [d for d in self.valid_days if d != test_day]
             
             test_data = self.fleet_cache[test_day]
-            ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Dt, align='t0')
+            ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.delta_t, align='t0')
             horizon = len(ds_test['Pd'])
             
             run_id = f"Day {test_day}"
@@ -240,7 +223,7 @@ class VoyageBenchmarker:
             test_day = self.valid_days[i]
             
             test_data = self.fleet_cache[test_day]
-            ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.Dt, align='t0')
+            ds_test = downsample_block_mean(test_data['t'], test_data['Pd'], self.config.delta_t, align='t0')
             horizon = len(ds_test['Pd'])
             
             run_id = f"Train {train_days[-1]} -> Test {test_day}"
