@@ -1,5 +1,0 @@
-python/.venv/
-data/
-.docs/
-**/__pycache__/
-*.pyc
