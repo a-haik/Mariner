@@ -133,7 +133,6 @@ class VoyageBenchmarker:
         """Phase 2: Bypasses training entirely and just executes the continuous environment."""
         is_macro_returned = approach_factory.is_macro
         
-        # Pass the pre-computed math into the factory
         controller, plant, _ = approach_factory(self.config, mc_model, horizon_length, raw_solution=raw_solution)
         
         if is_macro_returned:
@@ -150,7 +149,36 @@ class VoyageBenchmarker:
         sim_results = sim.run(controller)
         calc_time = time.perf_counter() - start_time
         
-        # Separated H2 Fuel Cost and FC Degradation Cost metrics
+        telemetry_df = pd.DataFrame(sim.history)
+        
+        total_time_sec = len(telemetry_df) * sim.dt
+        
+        n_col = 'n_active' if 'n_active' in telemetry_df.columns else 'n_curr'
+        pfc_col = 'P_fc' if 'P_fc' in telemetry_df.columns else 'p_fc_actual'
+        
+        # Calculate the absolute difference from step to step (1 Hz)
+        pfc_diff = np.abs(np.diff(telemetry_df[pfc_col].values, prepend=telemetry_df[pfc_col].values[0]))
+        n_diff = np.abs(np.diff(telemetry_df[n_col].values, prepend=telemetry_df[n_col].values[0]))
+        
+        # 1. Steady-State Operation (%)
+        steady_pfc_sec = np.sum(pfc_diff <= 1e-3) * sim.dt
+        steady_pfc_pct = (steady_pfc_sec / total_time_sec) * 100.0
+        
+        # 2. Fail-Safe Override Time (%)
+        # Mask identifying exactly when the strategic macro-steps occur
+        time_array = telemetry_df['time'].values
+        macro_step_mask = (time_array % self.config.delta_t) == 0
+        
+        # A fail-safe event is defined as any physical power change that occurs OUTSIDE a macro-step
+        failsafe_active_mask = (pfc_diff > 1e-3) & (~macro_step_mask)
+        failsafe_time_sec = np.sum(failsafe_active_mask) * sim.dt
+        failsafe_pct = (failsafe_time_sec / total_time_sec) * 100.0
+        
+        # 3. Total Module Switches
+        total_n_switches = np.sum(n_diff > 0)
+        # ----------------------------------------
+        # ----------------------------------------
+        
         metrics = {
             'Total Cost [$]': sim_results['total_cost'],
             'H2 Fuel Cost [$]': sum(sim.history.get('cost_h2', [0.0])),
@@ -160,11 +188,12 @@ class VoyageBenchmarker:
             'Transient Cost [$]': sum(sim.history.get('cost_tr', [0.0])), 
             'Term. Switch Cost [$]': sim_results['terminal_n_cost'],
             'Term. SoC Cost [$]': sim_results['terminal_soc_cost'],
-            'Offline Compute Time [s]': offline_time,
-            'Online Compute Time [s]': calc_time        
+            'Steady Operation [%]': steady_pfc_pct,
+            'Fail-Safe Time [%]': failsafe_pct,
+            'Module Switches': total_n_switches,
+            'Offline Compute Time [s]': offline_time,     
         }
         
-        telemetry_df = pd.DataFrame(sim.history)
         return metrics, telemetry_df
 
     def compare_approaches(self, approaches: dict, train_days: list, test_day: int) -> BenchmarkReport:

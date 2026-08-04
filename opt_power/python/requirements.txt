@@ -8,3 +8,5 @@ mat_io>=0.1.0
 ipykernel
 pyarrow
 fastparquet
+seaborn
+statsmodels

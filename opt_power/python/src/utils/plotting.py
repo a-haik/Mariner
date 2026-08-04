@@ -488,7 +488,7 @@ def plot_simulation_dashboard_bis(df: pd.DataFrame, config, title: str = "Simula
     if indiv:
         figsize = (3.15, 4.5)
     else:
-        figsize = (6.54, 3.5)
+        figsize = (6.54, 4)
 
     num_panes = 3 if has_battery else 2
     
@@ -573,7 +573,7 @@ def plot_simulation_dashboard_bis(df: pd.DataFrame, config, title: str = "Simula
     current_bottom, current_top = ax1.get_ylim()
     ax1.set_ylim(bottom=current_bottom, top=current_top * 1.15)
     
-    ax1.legend(loc='upper right', ncol=2, frameon=True, framealpha=0.9)
+    ax1.legend(loc='upper right', ncol=2, frameon=True, edgecolor='black', fancybox=False)
     ax1.text(0.015, 0.88, "(a)", transform=ax1.transAxes, fontweight='bold', fontsize=8)
 
     # =========================================================
@@ -641,11 +641,11 @@ def plot_simulation_dashboard_bis(df: pd.DataFrame, config, title: str = "Simula
         if sat_mid_times:
             ax3.scatter(
                 sat_mid_times, sat_mid_socs, 
-                color=color_sat_marker, marker='*', s=30, zorder=6, linewidth=0.4,
-                edgecolor='black', label='SOC Saturation'
+                color=color_sat_marker, marker='*', s=40, zorder=6, linewidth=0.4, alpha=.95,
+                edgecolor='white', label='SOC Saturation'
             )
 
-        ax3.legend(loc='lower right', frameon=True, framealpha=0.9)
+        ax3.legend(loc='upper right', frameon=True, edgecolor='black', fancybox=False)
 
         ax3.set_zorder(ax3_twin.get_zorder() + 1)
         ax3.patch.set_visible(False)
